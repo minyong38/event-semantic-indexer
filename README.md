@@ -1,0 +1,101 @@
+# event-semantic-indexer
+
+**카메라 메타데이터가 알려주는 "사람이 지나간 순간"에만 임베딩하는 자연어 영상 검색 인덱서 (C++)**
+
+자연어 영상 검색(예: "흰 비닐봉지를 든 사람")은 보통 일정 간격으로 프레임을 뽑아 화면 속 사람을 전부 임베딩합니다. 그러면 비용이 **채널 수 × 시간**에 비례하고, 오래 머문 한 사람이 인덱스를 도배합니다.
+
+이 프로젝트는 AI 카메라가 보내는 객체 메타데이터(ONVIF / WiseAI 형식)를 트리거로 씁니다. 사람이 화면을 떠날 때 오는 **요약 프레임의 베스트샷 1장**만 임베딩해서, 비용을 **지나간 사람 수**에 비례하게 바꿉니다. 붐비는 현장에서 추적 ID가 끊겨 한 사람이 여러 조각으로 나뉘는 문제는 **트랙 조각 잇기**로 풉니다.
+
+![비교 데모](docs/demo_compare.png)
+*"elderly woman" 검색 — 왼쪽(이벤트 방식, 임베딩 197개)은 4위부터 흰머리 노인을 찾고, 오른쪽(프레임 방식, 5,879개)은 오래 앉아 있던 한 사람이 상위 12개를 전부 차지한다.*
+
+## 결과 (MEVA 공개 데이터, 카메라 3대 × 5분, 질문 30개 직접 라벨링)
+
+| 방식 | 임베딩 | recall@1 | recall@5 | recall@10 | recall@50 |
+|---|---|---|---|---|---|
+| 프레임 (초당 1번, 화면 속 사람 전부) | 5,879 | 0.30 | 0.47 | 0.50 | 0.67 |
+| 이벤트 (요약 프레임 베스트샷) | 253 | 0.33 | 0.50 | 0.57 | 0.90 |
+| **이벤트 + 트랙 조각 잇기** | **197 (1/30)** | **0.33** | **0.57** | **0.70** | **0.90** |
+
+**같은 CPU로 감당하는 채널** (데스크톱 6코어/12스레드, 실시간 재생, 관제 영상 30fps 디코딩을 같이 돌림)
+
+| 조건 | 필요 임베딩/초 | 검색 반영 지연 p50 / p95 | 관제 영상 |
+|---|---|---|---|
+| 이벤트 64채널 | 39.5 | 0.8초 / 3.6초 | 30fps 유지 |
+| 프레임 2채널 | 38.3 | 0.6초 / 1.3초 | 30fps 유지 |
+| 프레임 4채널 | 76.5 | 16초 / 31초, 계속 증가 | 30fps 유지 |
+
+→ 이벤트 방식 64채널의 부하가 프레임 방식 2채널과 같다. (64채널 전부가 붐비는 체육관 수준이라는 보수적 가정)
+
+## 구조
+
+```
+AI 카메라 (WiseAI 메타데이터)            ← 실험에서는 camsim/ 대역 카메라가 같은 형식으로 생성
+  ├ 객체 프레임 5Hz: ObjectId, BoundingBox
+  └ 퇴장 시 요약 프레임: 베스트샷, 옷 색상
+        │
+        ▼
+[indexer]  C++
+  MetadataParser → Stitcher(트랙 조각 잇기, 지연 확정) → 필터(보인 시간·크기)
+  → ImageEmbedder(CLIP ViT-B/32, ONNX Runtime) → hnswlib
+        │  index.bin / items.jsonl
+        ▼
+[search_server]  C++
+  ClipTokenizer(BPE, open_clip과 토큰 일치 검증) → TextEmbedder → hnswlib top-k
+  → HTTP: /search, /img, /info
+        │
+        ▼
+[demo]  Qt Quick (QML) — 이벤트 / 프레임 결과 나란히 비교, 원본 영상 재생
+```
+
+### 트랙 조각 잇기
+사라진 객체의 위치를 속도로 외삽해서, 짧은 시간 안에 가까운 곳에 새로 뜬 ID를 같은 사람으로 묶습니다. 묶은 그룹은 이어질 조각이 더 없을 때까지 기다렸다가(지연 확정) 가장 큰 베스트샷 1장으로 한 번만 임베딩합니다.
+기준(거리 3%, 1초)은 강제 끊김 실험(정답을 아는 끊김 680쌍)에서 정했습니다. 정밀도 0.87(자동 채점 하한, 표본 눈 확인 시 약 0.95), 재현율 0.98입니다. 요양원 프로젝트(고정 앵커가 있음)의 18%·5초 기준은 붐비는 현장에서 다른 사람을 잇는 오류가 많아 버렸습니다.
+
+### 해보고 버린 것
+- **옷 색상 / 색 히스토그램으로 잇기 검증:** 어두운 체육관에선 대부분 '검정'이라 변별력이 없고, 밝은 곳 ↔ 그늘을 오가면 같은 사람도 히스토그램이 크게 달라져서 득보다 실이었습니다. 학습된 ReID 특징(카메라가 메타데이터로 보내는 특징 벡터)으로 검증하는 것이 맞는 방향입니다.
+
+## 폴더
+
+| 폴더 | 내용 |
+|---|---|
+| `indexer/` | C++ 인덱서(`indexer`) + 검색 서버(`search_server`) |
+| `demo/` | Qt Quick 검색 데모 클라이언트 |
+| `camsim/` | 대역 카메라: 영상 → YOLO + ByteTrack → WiseAI 형식 메타데이터·베스트샷 |
+| `model/` | CLIP → ONNX 변환(`export_clip.py`), 파이썬 검색 확인 도구 |
+| `eval/` | 비교군(프레임 인덱스), 평가(recall@k), 잇기 정확도, 채널 용량, 관제 영향 측정, 질문 30개 |
+
+## 실행
+
+**준비** (WSL2 Ubuntu 24.04 기준)
+```bash
+sudo apt install build-essential cmake libopencv-dev python3-dev
+pip install torch open_clip_torch onnx onnxscript onnxruntime hnswlib ultralytics opencv-python
+git clone https://github.com/nmslib/hnswlib ~/hnswlib
+# ONNX Runtime 1.20.1: NuGet Microsoft.ML.OnnxRuntime 패키지의 build/native/include, runtimes/linux-x64/native → onnxruntime/include, onnxruntime/lib
+cd model && python export_clip.py && gunzip -k bpe_simple_vocab_16e6.txt.gz
+```
+
+**빌드**
+```bash
+cmake -S indexer -B ~/build/indexer -DHNSW_DIR=$HOME/hnswlib && cmake --build ~/build/indexer -j
+```
+
+**메타데이터 생성 → 인덱싱 → 검색**
+```bash
+python camsim/fake_wiseai_cam.py <영상> --ch 0 --out camsim/out_raw     # 채널마다
+~/build/indexer/indexer --meta camsim/out_raw --model model/clip_image.onnx --out ~/idx_event \
+    --min-dur 0.5 --stitch 1 --link-dist 0.03 --link-sec 1
+~/build/indexer/search_server --event ~/idx_event --frame ~/idx_frame --frags camsim/out_raw \
+    --videos <영상 폴더> --text model/clip_text.onnx --vocab model/bpe_simple_vocab_16e6.txt
+```
+데모는 `demo/CMakeLists.txt`를 Qt Creator(Qt 6.5+, Quick·Multimedia)로 열어 실행합니다. 기본 서버 주소는 `http://localhost:8765`입니다.
+
+## 한계
+- 현장 1곳(체육관 + 실외), 5분. 정답은 직접 라벨링했습니다(질문 묘사에 맞는가 기준).
+- 실제 카메라 대신 대역 카메라를 썼습니다. 메타데이터 형식은 실제 카메라 캡처를 기준으로 맞췄고, 요약 프레임의 옷 색상 태그 형식은 가정입니다.
+- 오래 끊겼다가 다시 나타난 같은 사람은 별개로 남습니다(ReID 벡터로 합칠 대상).
+
+## 데이터·라이선스
+- 영상: [MEVA](https://mevadata.org) (CC BY 4.0). 저장소에는 포함하지 않았습니다.
+- 모델: open_clip ViT-B-32 (laion2b_s34b_b79k).

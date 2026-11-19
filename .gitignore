@@ -1,0 +1,30 @@
+# 빌드
+build/
+*.user
+
+# 모델 (export_clip.py로 재생성) — 어휘 파일은 .gz만 올림
+model/*.onnx
+model/*.onnx.data
+model/bpe_simple_vocab_16e6.txt
+*.pt
+
+# ONNX Runtime (NuGet에서 받음)
+onnxruntime/
+*.nupkg
+
+# 영상·대역 카메라 출력 (MEVA 원본, 베스트샷, 메타데이터)
+camsim/meva/
+camsim/meva_raw/
+camsim/out*/
+*.avi
+*.mp4
+
+# 평가 중간 산출물 (MEVA 크롭 이미지 포함)
+eval/sheets/
+eval/review/
+eval/hist_cut.jpg
+eval/hist_links.json
+eval/links_brk.jsonl
+
+__pycache__/
+.vscode/

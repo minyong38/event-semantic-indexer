@@ -1,0 +1,261 @@
+[
+ {
+  "q": "a person carrying white plastic bags",
+  "gt": [
+   "ch2-54",
+   "ch2-57",
+   "ch2-60",
+   "ch2-73",
+   "ch2-76",
+   "ch2-66"
+  ]
+ },
+ {
+  "q": "a person wearing a neon yellow beanie",
+  "gt": [
+   "ch0-6",
+   "ch0-50",
+   "ch0-56",
+   "ch0-3329",
+   "ch0-3347",
+   "ch0-3467",
+   "ch0-3488",
+   "ch0-3513",
+   "ch0-3613"
+  ]
+ },
+ {
+  "q": "a person in a neon green hoodie",
+  "gt": [
+   "ch0-191",
+   "ch0-295",
+   "ch0-425",
+   "ch0-484",
+   "ch0-516",
+   "ch0-523",
+   "ch0-652",
+   "ch0-1499",
+   "ch0-2173",
+   "ch0-3667"
+  ]
+ },
+ {
+  "q": "a person wearing a white jacket",
+  "gt": [
+   "ch0-219",
+   "ch0-303"
+  ]
+ },
+ {
+  "q": "a person carrying a backpack",
+  "gt": [
+   "ch2-20",
+   "ch2-66",
+   "ch2-48"
+  ]
+ },
+ {
+  "q": "a person carrying a black case",
+  "gt": [
+   "ch2-48"
+  ]
+ },
+ {
+  "q": "a person wearing light gray pants",
+  "gt": [
+   "ch0-3",
+   "ch0-4403",
+   "ch0-1770",
+   "ch0-1825"
+  ]
+ },
+ {
+  "q": "a woman in a red top sitting",
+  "gt": [
+   "ch0-788",
+   "ch0-808",
+   "ch0-841",
+   "ch0-973",
+   "ch0-1074",
+   "ch0-1087",
+   "ch0-1188",
+   "ch0-1295",
+   "ch0-1407",
+   "ch0-1553",
+   "ch0-1715",
+   "ch0-1748",
+   "ch0-1794",
+   "ch0-1929",
+   "ch0-2088",
+   "ch0-2109",
+   "ch0-2313",
+   "ch0-2375",
+   "ch0-2480",
+   "ch0-2720",
+   "ch0-3664",
+   "ch0-3791",
+   "ch0-3878",
+   "ch0-3934",
+   "ch0-3994",
+   "ch0-4239",
+   "ch0-4267",
+   "ch0-4319",
+   "ch0-4475"
+  ]
+ },
+ {
+  "q": "a person wearing a black and white patterned shirt",
+  "gt": [
+   "ch0-320",
+   "ch0-401",
+   "ch0-548",
+   "ch0-1038",
+   "ch0-1476",
+   "ch0-1612",
+   "ch0-1973",
+   "ch0-2669"
+  ]
+ },
+ {
+  "q": "a person carrying blue bags",
+  "gt": [
+   "ch2-38",
+   "ch2-45",
+   "ch2-47"
+  ]
+ },
+ {
+  "q": "a person wearing a green jacket",
+  "gt": [
+   "ch2-66",
+   "ch2-76",
+   "ch2-77",
+   "ch2-15"
+  ]
+ },
+ {
+  "q": "a person holding a yellow paper",
+  "gt": [
+   "ch0-763",
+   "ch0-1881",
+   "ch0-2740",
+   "ch0-3416",
+   "ch0-3984"
+  ]
+ },
+ {
+  "q": "a person in a red jacket walking",
+  "gt": [
+   "ch0-1627",
+   "ch0-2842"
+  ]
+ },
+ {
+  "q": "a person carrying a white box",
+  "gt": [
+   "ch2-3",
+   "ch2-11",
+   "ch2-15"
+  ]
+ },
+ {
+  "q": "a person wearing a blue sweater",
+  "gt": [
+   "ch0-3331",
+   "ch0-3806",
+   "ch0-3813",
+   "ch0-3840",
+   "ch0-3891"
+  ]
+ },
+ {
+  "q": "a person with long black hair",
+  "gt": [
+   "ch0-260",
+   "ch0-487",
+   "ch0-1648",
+   "ch0-3843",
+   "ch0-3874",
+   "ch0-3880",
+   "ch0-3895",
+   "ch0-4098"
+  ]
+ },
+ {
+  "q": "a person wearing blue jeans walking outside",
+  "gt": [
+   "ch2-54",
+   "ch2-57",
+   "ch2-60",
+   "ch2-73",
+   "ch2-76",
+   "ch2-77"
+  ]
+ },
+ {
+  "q": "a person wearing a cap",
+  "gt": [
+   "ch2-3",
+   "ch2-11",
+   "ch2-15",
+   "ch2-48"
+  ]
+ },
+ {
+  "q": "a man with gray hair",
+  "gt": [
+   "ch2-48"
+  ]
+ },
+ {
+  "q": "a person bending over a table",
+  "gt": [
+   "ch0-63",
+   "ch0-198",
+   "ch0-1461",
+   "ch0-2349",
+   "ch0-2636",
+   "ch0-2659"
+  ]
+ },
+ {
+  "q": "a person wearing a striped shirt",
+  "gt": [
+   "ch0-231",
+   "ch0-554"
+  ]
+ },
+ {
+  "q": "a person carrying a pack of toilet paper",
+  "gt": [
+   "ch2-66"
+  ]
+ },
+ {
+  "q": "a person holding a sheet of paper",
+  "gt": [
+   "ch0-2058",
+   "ch0-3331"
+  ]
+ },
+ {
+  "q": "a person carrying a white bag indoors",
+  "gt": [
+   "ch0-2191",
+   "ch0-2745",
+   "ch0-2777",
+   "ch0-2877",
+   "ch0-3984"
+  ]
+ },
+ {
+  "q": "a person wearing brown boots",
+  "gt": [
+   "ch0-763",
+   "ch0-1881",
+   "ch0-2740",
+   "ch0-2877",
+   "ch0-3416"
+  ]
+ }
+]
