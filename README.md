@@ -27,14 +27,19 @@
 
 → 이벤트 방식 64채널의 부하가 프레임 방식 2채널과 같다. 카메라 64대를 실제로 연결한 것이 아니라, 64대 전부가 체육관만큼 붐비는 최악의 경우를 재현한 것이다.
 
-### VLM 선택 검증 — 같은 GPU, 질문당 10장만
-임베딩 검색 상위 N명만 VLM(Qwen2-VL-2B, FP16)에 "이 사진이 질문에 맞나? yes/no"로 묻고 P(yes) 순으로 다시 줄 세운다. 질문 30개, 두 방식 같은 조건.
+### VLM 선택 검증 — 검색 서버가 상위 10명만 VLM에 묻는다
+`/search?...&verify=10`이면 검색 서버(C++)가 임베딩 상위 10명의 사진을 VLM 서비스(Qwen2-VL-2B, FP16)에 보내 "이 사진이 질문에 맞나? yes/no"의 P(yes)를 받고, 그 순서로 다시 줄 세운다. VLM 서비스가 멈춰 있으면 임베딩 결과를 그대로 돌려준다. 질문 30개, 두 방식 같은 조건, 서버 경로로 측정(`eval/e2e_eval.py`).
+
+![VLM 검증 데모](docs/demo_vlm.png)
+*VLM 검증을 켜고 "elderly woman" 검색 — 이벤트 쪽은 임베딩 10위였던 흰머리 노인이 VLM ✓ 0.96으로 1위가 된다. 프레임 쪽은 후보 12명이 전부 같은 사람이라 VLM을 켜도 바뀌지 않는다.*
 
 | 인덱스 | 방식 | recall@1 | recall@5 | recall@10 | VLM 호출/질문 |
 |---|---|---|---|---|---|
 | 프레임 | 임베딩만 → VLM 상위 10명 | 0.30 → 0.40 | 0.47 → 0.50 | 0.50 → 0.50 | 10 |
 | **이벤트** | **임베딩만 → VLM 상위 10명** | **0.33 → 0.60** | **0.57 → 0.70** | 0.70 → 0.70 | 10 |
 | **이벤트** | VLM 상위 20명 | **0.63** | **0.80** | **0.80** | 20 |
+
+질문 1개 응답 시간(p50): 이벤트 VLM 10명 0.8초 / 20명 1.6초, 프레임 VLM 10명 1.0초(프레임 결과는 사진을 영상에서 그때그때 잘라야 해서 더 느림).
 
 같은 VLM 예산인데 효과가 다른 이유: 프레임 방식 상위 10명은 같은 사람의 반복이라 VLM이 고를 후보가 없다. **싸고 다양한 1단계가 비싼 VLM을 효과 있게 만든다.**
 
@@ -47,7 +52,7 @@
 | 프레임 64ch, 초당 1번 | 100% | 1.41초 (2.1배) |
 | 프레임 64ch, 초당 5번 | 36% (계속 쌓임) | 1.57초 (2.3배) |
 
-메모리: VLM 4.17GB + CLIP 0.56GB. 측정 스크립트: `eval/vlm_rerank.py`, `eval/gpu_share_bench.py`, `eval/gpu_clip_bench.py`
+메모리: VLM 4.17GB + CLIP 0.56GB. 측정 스크립트: `eval/e2e_eval.py`(서버 경로), `eval/vlm_rerank.py`(초기 실험, 같은 숫자), `eval/gpu_share_bench.py`, `eval/gpu_clip_bench.py`
 
 ## 구조
 
@@ -64,12 +69,12 @@ AI 카메라 (WiseAI 메타데이터)            ← 실험에서는 camsim/ 대
         ▼
 [search_server]  C++
   ClipTokenizer(BPE, open_clip과 토큰 일치 검증) → TextEmbedder → hnswlib top-k
+  → (verify=N) 상위 N명 사진 ──HTTP──▶ [vlm_service] Qwen2-VL yes/no → 다시 줄 세움
   → HTTP: /search, /img, /info
         │
         ▼
 [demo]  Qt Quick (QML) — 이벤트 / 프레임 결과 나란히 비교, 원본 영상 재생
 
-(실험) 상위 N명 → VLM yes/no 재정렬 — eval/vlm_rerank.py
 ```
 
 ### 트랙 조각 잇기
@@ -86,6 +91,7 @@ AI 카메라 (WiseAI 메타데이터)            ← 실험에서는 camsim/ 대
 | `indexer/` | C++ 인덱서(`indexer`) + 검색 서버(`search_server`) |
 | `demo/` | Qt Quick 검색 데모 클라이언트 |
 | `camsim/` | 대역 카메라: 영상 → YOLO + ByteTrack → WiseAI 형식 메타데이터·베스트샷 |
+| `vlm/` | VLM 검증 서비스 (검색 서버가 HTTP로 호출) |
 | `model/` | CLIP → ONNX 변환(`export_clip.py`), 파이썬 검색 확인 도구 |
 | `eval/` | 비교군(프레임 인덱스), 평가(recall@k), 잇기 정확도, 채널 용량, 관제 영향 측정, 질문 30개 |
 
@@ -111,7 +117,9 @@ python camsim/fake_wiseai_cam.py <영상> --ch 0 --out camsim/out_raw     # 채�
 ~/build/indexer/indexer --meta camsim/out_raw --model model/clip_image.onnx --out ~/idx_event \
     --min-dur 0.5 --stitch 1 --link-dist 0.03 --link-sec 1
 ~/build/indexer/search_server --event ~/idx_event --frame ~/idx_frame --frags camsim/out_raw \
-    --videos <영상 폴더> --text model/clip_text.onnx --vocab model/bpe_simple_vocab_16e6.txt
+    --videos <영상 폴더> --text model/clip_text.onnx --vocab model/bpe_simple_vocab_16e6.txt \
+    --vlm http://localhost:8766          # VLM 검증을 쓸 때만
+python vlm/vlm_service.py --port 8766    # VLM 검증 서비스 (GPU, 약 4.2GB)
 ```
 데모는 `demo/CMakeLists.txt`를 Qt Creator(Qt 6.5+, Quick·Multimedia)로 열어 실행합니다. 기본 서버 주소는 `http://localhost:8765`입니다.
 
