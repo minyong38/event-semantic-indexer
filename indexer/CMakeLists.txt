@@ -32,6 +32,7 @@ add_executable(search_server
   src/clip_tokenizer.cpp
   src/text_embedder.cpp
   src/http_server.cpp
+  src/http_client.cpp
   src/summary.cpp
   src/metadata_parser.cpp)
 target_include_directories(search_server PRIVATE src ${ORT_DIR}/include ${HNSW_DIR} ${CMAKE_SOURCE_DIR}/../third_party)

@@ -27,6 +27,7 @@ ApplicationWindow {
 
     property string server: typeof serverUrl !== "undefined" ? serverUrl : "http://localhost:8765"
     property string mode: "compare"            // event | frame | compare
+    property bool verify: false                // VLM 검증: 상위 10명만 VLM에 물어 재정렬
     property var evRes: null
     property var frRes: null
     property var sel: null                     // 선택한 결과 1건
@@ -57,8 +58,8 @@ ApplicationWindow {
         const enc = encodeURIComponent(q)
         let pending = mode === "compare" ? 2 : 1
         const done = function () { if (--pending === 0) busy = false }
-        if (mode !== "frame") get("/search?index=event&k=12&q=" + enc, function (r) { evRes = r; done() })
-        if (mode !== "event") get("/search?index=frame&k=12&q=" + enc, function (r) { frRes = r; done() })
+        if (mode !== "frame") get("/search?index=event&k=12" + (verify ? "&verify=10" : "") + "&q=" + enc, function (r) { evRes = r; done() })
+        if (mode !== "event") get("/search?index=frame&k=12" + (verify ? "&verify=10" : "") + "&q=" + enc, function (r) { frRes = r; done() })
     }
     function pick(h, kind) {
         sel = h; selKind = kind
@@ -93,7 +94,9 @@ ApplicationWindow {
                     text: {
                         const n = win.info[col.kind] ? win.info[col.kind].embedded.toLocaleString(Qt.locale(), "f", 0) : "-"
                         if (!col.res) return "임베딩 " + n + "개"
-                        return "임베딩 " + n + "개 · 검색 " + col.res.ms.toFixed(1) + " ms"
+                        let s = "임베딩 " + n + "개 · 검색 " + col.res.search_ms.toFixed(1) + " ms"
+                        if (col.res.vlm) s += col.res.vlm.error ? " · VLM 실패" : " · VLM " + col.res.vlm.calls + "장 " + col.res.vlm.ms.toFixed(0) + " ms"
+                        return s
                     }
                 }
                 Text {
@@ -147,12 +150,21 @@ ApplicationWindow {
                         width: 34; height: 18; radius: 3; color: c.dup
                         Text { anchors.centerIn: parent; text: "중복"; color: "white"; font.pixelSize: 11; font.bold: true }
                     }
+                    Rectangle {
+                        visible: modelData.vlm !== undefined
+                        anchors { right: parent.right; bottom: meta.top; margins: 6 }
+                        width: vt.implicitWidth + 10; height: 18; radius: 3
+                        color: modelData.vlm >= 0.5 ? c.event : "#555b66"
+                        Text { id: vt; anchors.centerIn: parent; color: "white"; font.pixelSize: 11; font.bold: true
+                               text: modelData.vlm === undefined ? "" : (modelData.vlm >= 0.5 ? "VLM ✓ " : "VLM ") + modelData.vlm.toFixed(2) }
+                    }
                     Column {
                         id: meta
                         anchors { left: parent.left; right: parent.right; bottom: parent.bottom; margins: 6 }
                         spacing: 1
                         Text { text: modelData.score.toFixed(3) + "  ·  " + modelData.channel; color: c.text; font.pixelSize: 11 }
                         Text { text: "영상 " + win.mmss(modelData.t) + (modelData.members.length > 1 ? "  ·  조각 " + modelData.members.length + "개 이음" : "")
+                                     + (modelData.vlm !== undefined && modelData.clip_rank !== modelData.rank ? "  ·  임베딩 " + modelData.clip_rank + "위" : "")
                                color: c.sub; font.pixelSize: 11 }
                     }
                     MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: win.pick(modelData, col.kind) }
@@ -198,6 +210,16 @@ ApplicationWindow {
                                         onClicked: { win.mode = modelData[0]; if (query.text !== "") win.search() } }
                         }
                     }
+                }
+                Rectangle {
+                    Layout.fillWidth: true; height: 30; radius: 3
+                    color: win.verify ? c.event : c.bg
+                    border.color: win.verify ? c.event : c.border
+                    Text { anchors.centerIn: parent; font.pixelSize: 12; font.bold: true
+                           text: win.verify ? "VLM 검증 켜짐 (상위 10명)" : "VLM 검증 꺼짐"
+                           color: win.verify ? "white" : c.sub }
+                    MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor
+                                onClicked: { win.verify = !win.verify; if (query.text !== "") win.search() } }
                 }
                 Rectangle {
                     Layout.fillWidth: true; height: 36; radius: 3

@@ -1,19 +1,21 @@
 // 검색 서버 — 인덱서가 만든 인덱스(이벤트·프레임)를 읽어 자연어 검색을 HTTP로 제공.
 //
-//   GET /search?q=<영어 문장>&index=event|frame&k=12
+//   GET /search?q=<영어 문장>&index=event|frame&k=12[&verify=10]
+//       verify=N: 임베딩 상위 N명 사진을 VLM 서비스에 보내 "질문에 맞나?" 점수(P(yes))로 다시 줄 세움
 //   GET /img/event/<label>   그룹 대표 베스트샷 (파일 그대로)
 //   GET /img/frame/<label>   그 시각 영상 프레임에서 사람 크롭 (메타데이터 박스)
 //   GET /info                인덱스별 임베딩 수
 //
 //   search_server --event ~/idx_stB --frame ~/idx_frame --frags ../camsim/out_raw \
 //                 --videos ../camsim/meva_raw --text ../model/clip_text.onnx \
-//                 --vocab ../model/bpe_simple_vocab_16e6.txt [--port 8765]
+//                 --vocab ../model/bpe_simple_vocab_16e6.txt [--port 8765] [--vlm http://localhost:8766]
 //   검증용: --tokens "문장"  (토큰 ID 출력 후 종료), --query "문장" [--index event]  (상위 결과 출력 후 종료)
 #include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <csignal>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <ctime>
 #include <filesystem>
@@ -34,6 +36,7 @@
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/videoio.hpp>
 
+#include "http_client.hpp"
 #include "http_server.hpp"
 #include "metadata_parser.hpp"
 #include "summary.hpp"
@@ -48,7 +51,8 @@ struct Args {
     std::string event, frame, frags, videos, text, vocab;
     std::string start = "2026-11-19T09:00:00";
     std::string tokens, query, index = "event";
-    int port = 8765, k = 12, threads = 1;
+    std::string vlm;  // VLM 서비스 주소 (비우면 검증 안 함)
+    int port = 8765, k = 12, threads = 1, verify = 0;
 };
 
 Args parseArgs(int argc, char** argv) {
@@ -68,9 +72,30 @@ Args parseArgs(int argc, char** argv) {
         else if (k == "--query") a.query = v;
         else if (k == "--index") a.index = v;
         else if (k == "-k") a.k = std::stoi(v);
+        else if (k == "--vlm") a.vlm = v;
+        else if (k == "--verify") a.verify = std::stoi(v);
         else std::fprintf(stderr, "알 수 없는 인자 %s\n", k.c_str());
     }
     return a;
+}
+
+std::string base64(const std::string& in) {
+    static const char* t = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    std::string out;
+    out.reserve((in.size() + 2) / 3 * 4);
+    size_t i = 0;
+    for (; i + 2 < in.size(); i += 3) {
+        const unsigned v = (uint8_t(in[i]) << 16) | (uint8_t(in[i + 1]) << 8) | uint8_t(in[i + 2]);
+        out += t[v >> 18]; out += t[(v >> 12) & 63]; out += t[(v >> 6) & 63]; out += t[v & 63];
+    }
+    if (i < in.size()) {
+        unsigned v = uint8_t(in[i]) << 16;
+        if (i + 1 < in.size()) v |= uint8_t(in[i + 1]) << 8;
+        out += t[v >> 18]; out += t[(v >> 12) & 63];
+        out += i + 1 < in.size() ? t[(v >> 6) & 63] : '=';
+        out += '=';
+    }
+    return out;
 }
 
 std::string expand(const std::string& p) {
@@ -121,6 +146,8 @@ const char* kChName[] = {"CH1 체육관", "CH2", "CH3 실외"};
 class SearchService {
 public:
     explicit SearchService(const Args& a) : text_(a.text, a.vocab, a.threads) {
+        if (!a.vlm.empty() && parseHostPort(a.vlm, vlm_host_, vlm_port_))
+            std::fprintf(stderr, "[search] VLM 서비스 %s:%d\n", vlm_host_.c_str(), vlm_port_);
         idx_["event"] = loadIndex(expand(a.event));
         idx_["frame"] = loadIndex(expand(a.frame));
 
@@ -161,7 +188,8 @@ public:
 
     const ClipTokenizer& tokenizer() const { return text_.tokenizer(); }
 
-    json search(const std::string& q, const std::string& kind, int k) {
+    // 질문 처리 단계: ① 임베딩 검색으로 후보 → ② (verify>0) 상위 N명만 VLM 검증·재정렬 → ③ 상위 k개 응답
+    json search(const std::string& q, const std::string& kind, int k, int verify = 0) {
         const auto t0 = std::chrono::steady_clock::now();
         Index& ix = idx_.at(kind);
         std::vector<float> v;
@@ -169,19 +197,20 @@ public:
             std::lock_guard<std::mutex> lk(text_mutex_);
             v = text_.embed(q);
         }
-        auto pq = ix.hnsw->searchKnn(v.data(), std::min<size_t>(k, ix.items.size()));
+        const size_t want = std::min<size_t>(std::max(k, verify), ix.items.size());
+        auto pq = ix.hnsw->searchKnn(v.data(), want);
         std::vector<std::pair<float, size_t>> res;
         while (!pq.empty()) { res.push_back({pq.top().first, pq.top().second}); pq.pop(); }
         std::reverse(res.begin(), res.end());  // 가까운 순
+        const double search_ms = ms(t0);
 
-        json hits = json::array();
-        std::set<std::string> persons;
+        std::vector<json> hits;
         int rank = 0;
         for (const auto& [dist, label] : res) {
             const json& it = ix.items[label];
             const int ch = it["ch"].get<int>();
             json h;
-            h["rank"] = ++rank;
+            h["clip_rank"] = ++rank;
             h["score"] = std::round((1.0 - dist) * 10000) / 10000;
             h["label"] = label;
             h["ch"] = ch;
@@ -209,20 +238,66 @@ public:
             h["t_end"] = tl;
             h["members"] = members;
             auto f0 = frags_.find(key(ch, members.front()));
-            const std::string person = "ch" + std::to_string(ch) + "-" +
-                                       (f0 != frags_.end() ? std::to_string(f0->second.true_id) : "?");
-            h["person"] = person;
-            persons.insert(person);
-            hits.push_back(h);
+            h["person"] = "ch" + std::to_string(ch) + "-" +
+                          (f0 != frags_.end() ? std::to_string(f0->second.true_id) : "?");
+            hits.push_back(std::move(h));
+        }
+
+        json vlm_info = nullptr;
+        if (verify > 0 && !hits.empty()) vlm_info = verifyTop(q, kind, hits, std::min<size_t>(verify, hits.size()));
+
+        if (hits.size() > static_cast<size_t>(k)) hits.resize(k);
+        json arr = json::array();
+        std::set<std::string> persons;
+        rank = 0;
+        for (json& h : hits) {
+            h["rank"] = ++rank;
+            persons.insert(h["person"].get<std::string>());
+            arr.push_back(h);
         }
         json out;
         out["query"] = q;
         out["index"] = kind;
         out["embedded"] = ix.items.size();
         out["unique"] = persons.size();
-        out["ms"] = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
-        out["hits"] = hits;
+        out["search_ms"] = search_ms;
+        out["vlm"] = vlm_info;
+        out["ms"] = ms(t0);
+        out["hits"] = arr;
         return out;
+    }
+
+    // 상위 n명 사진을 VLM 서비스에 보내 P(yes)를 받고, 그 n명만 점수 순으로 다시 줄 세운다.
+    // 서비스가 없거나 실패하면 임베딩 순위를 그대로 둔다 (검색은 VLM 없이도 동작해야 함).
+    json verifyTop(const std::string& q, const std::string& kind, std::vector<json>& hits, size_t n) {
+        json info;
+        info["requested"] = n;
+        if (vlm_host_.empty()) {
+            info["error"] = "VLM 서비스 미설정 (--vlm)";
+            return info;
+        }
+        const auto t0 = std::chrono::steady_clock::now();
+        json req;
+        req["query"] = q;
+        req["images"] = json::array();
+        for (size_t i = 0; i < n; ++i)
+            req["images"].push_back(base64(image(kind, hits[i]["label"].get<size_t>())));
+        const HttpResult r = httpPost(vlm_host_, vlm_port_, "/verify", req.dump(), "application/json", 60000);
+        if (r.code != 200) {
+            info["error"] = r.code ? "VLM 서비스 응답 " + std::to_string(r.code) : r.error;
+            return info;
+        }
+        const json resp = json::parse(r.body);
+        const auto scores = resp["scores"].get<std::vector<double>>();
+        for (size_t i = 0; i < n; ++i)
+            hits[i]["vlm"] = i < scores.size() ? std::round(scores[i] * 1000) / 1000 : -1.0;
+        std::stable_sort(hits.begin(), hits.begin() + static_cast<long>(n), [](const json& a, const json& b) {
+            return a["vlm"].get<double>() > b["vlm"].get<double>();  // 같으면 원래(임베딩) 순서 유지
+        });
+        info["calls"] = n;
+        info["ms"] = ms(t0);
+        info["model_ms"] = resp.value("ms", 0.0);
+        return info;
     }
 
     // 결과 이미지 (jpg 바이트). 없으면 빈 문자열.
@@ -275,7 +350,13 @@ public:
     }
 
 private:
+    static double ms(std::chrono::steady_clock::time_point t0) {
+        return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+    }
+
     TextEmbedder text_;
+    std::string vlm_host_;
+    int vlm_port_ = 0;
     std::mutex text_mutex_, video_mutex_, cache_mutex_;
     std::map<std::string, Index> idx_;
     std::vector<fs::path> videos_;
@@ -302,13 +383,17 @@ int main(int argc, char** argv) {
     SearchService svc(a);
 
     if (!a.query.empty()) {  // 명령줄 검색
-        const json r = svc.search(a.query, a.index, a.k);
+        const json r = svc.search(a.query, a.index, a.k, a.verify);
         std::printf("\"%s\" [%s] %.1f ms, 서로 다른 인물 %d/%zu\n", a.query.c_str(), a.index.c_str(),
                     r["ms"].get<double>(), r["unique"].get<int>(), r["hits"].size());
         for (const json& h : r["hits"])
-            std::printf("  %2d. %.3f  %s  t=%.1fs  %s\n", h["rank"].get<int>(), h["score"].get<double>(),
+            std::printf("  %2d. %.3f  %s  t=%.1fs  %s%s\n", h["rank"].get<int>(), h["score"].get<double>(),
                         h["channel"].get<std::string>().c_str(), h["t"].get<double>(),
-                        h["person"].get<std::string>().c_str());
+                        h["person"].get<std::string>().c_str(),
+                        h.contains("vlm") ? ("  VLM " + std::to_string(h["vlm"].get<double>()).substr(0, 5) +
+                                             " (임베딩 " + std::to_string(h["clip_rank"].get<int>()) + "위)").c_str()
+                                          : "");
+        if (!r["vlm"].is_null()) std::printf("VLM: %s\n", r["vlm"].dump().c_str());
         return 0;
     }
 
@@ -318,14 +403,15 @@ int main(int argc, char** argv) {
             auto q = r.query.find("q");
             const std::string kind = r.query.count("index") ? r.query.at("index") : "event";
             const int k = r.query.count("k") ? std::stoi(r.query.at("k")) : 12;
+            const int verify = r.query.count("verify") ? std::stoi(r.query.at("verify")) : 0;
             if (q == r.query.end() || q->second.empty() || (kind != "event" && kind != "frame")) {
                 res.code = 400;
                 res.body = R"({"error":"q, index=event|frame"})";
                 return res;
             }
-            const json out = svc.search(q->second, kind, k);
-            std::fprintf(stderr, "[search] %s \"%s\" %.1f ms\n", kind.c_str(), q->second.c_str(),
-                         out["ms"].get<double>());
+            const json out = svc.search(q->second, kind, k, verify);
+            std::fprintf(stderr, "[search] %s \"%s\" %.1f ms%s\n", kind.c_str(), q->second.c_str(),
+                         out["ms"].get<double>(), verify ? (" (VLM " + std::to_string(verify) + "명)").c_str() : "");
             res.body = out.dump();
         } else if (r.path.rfind("/img/", 0) == 0) {
             const std::string rest = r.path.substr(5);
