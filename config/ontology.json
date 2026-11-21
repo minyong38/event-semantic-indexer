@@ -1,0 +1,133 @@
+{
+ "version": 2,
+ "about": "검색 질문을 구조화하는 틀. 검색 서버가 장소·시각·색을 동의어 사전과 정규식으로 뽑아 장소·시각은 하드 필터로 쓰고, 남은 묘사(한국어면 VLM 서비스 /translate로 영어)를 임베딩한다.",
+ "sites": {
+  "school": "학교",
+  "bus": "버스 정류장",
+  "hospital": "병원",
+  "admin": "사무동"
+ },
+ "colors": [
+  "black",
+  "white",
+  "gray",
+  "red",
+  "orange",
+  "brown",
+  "yellow",
+  "green",
+  "blue",
+  "purple",
+  "pink"
+ ],
+ "fields": {
+  "site": "장소 — sites 중 하나. 카메라(영상 파일 이름의 장소)로 거름",
+  "after": "이 시각 이후 (HH:MM) — 사람이 보인 시간대로 거름",
+  "before": "이 시각 이전 (HH:MM)",
+  "top_color": "상의 색 — 카메라 메타데이터. 어두운 곳에서 부정확해서 필터로는 안 쓰고 기록만",
+  "bottom_color": "하의 색 — 위와 같음",
+  "description": "장소·시간을 뺀 사람의 모습·행동 (영어) — 임베딩 검색과 VLM 검증에 씀",
+  "how": "rule: 장소·시각·색은 동의어 사전과 정규식, 남은 한국어 묘사만 LLM이 영어로 번역 / llm: LLM이 전부 (비교용)"
+ },
+ "hard_filters": [
+  "site",
+  "after",
+  "before"
+ ],
+ "synonyms": {
+  "school": [
+   "school",
+   "campus",
+   "학교",
+   "캠퍼스"
+  ],
+  "bus": [
+   "bus stop",
+   "bus station",
+   "bus",
+   "버스 정류장",
+   "버스정류장",
+   "정류장",
+   "버스"
+  ],
+  "hospital": [
+   "hospital",
+   "clinic",
+   "병원"
+  ],
+  "admin": [
+   "office building",
+   "office",
+   "admin building",
+   "사무동",
+   "사무실",
+   "사무 건물"
+  ]
+ },
+ "color_words": {
+  "black": [
+   "black",
+   "검은",
+   "검정",
+   "까만"
+  ],
+  "white": [
+   "white",
+   "흰",
+   "하얀"
+  ],
+  "gray": [
+   "gray",
+   "grey",
+   "회색"
+  ],
+  "red": [
+   "red",
+   "빨간",
+   "빨강"
+  ],
+  "orange": [
+   "orange",
+   "주황"
+  ],
+  "brown": [
+   "brown",
+   "갈색"
+  ],
+  "yellow": [
+   "yellow",
+   "노란",
+   "노랑"
+  ],
+  "green": [
+   "green",
+   "초록",
+   "녹색"
+  ],
+  "blue": [
+   "blue",
+   "파란",
+   "파랑",
+   "남색"
+  ],
+  "purple": [
+   "purple",
+   "보라"
+  ],
+  "pink": [
+   "pink",
+   "분홍"
+  ]
+ },
+ "bottom_words": [
+  "pants",
+  "trousers",
+  "jeans",
+  "shorts",
+  "skirt",
+  "바지",
+  "청바지",
+  "반바지",
+  "치마"
+ ]
+}

@@ -1,0 +1,18 @@
+nohup: ignoring input
+== ch16 meva_multi/2018-03-07.10-55-00.11-00-00.hospital.G436.r13.avi 19:08:21
+[camsim] ch16: 1500틱, 조각 362개 → out_multi
+== ch17 meva_multi/2018-03-07.10-55-01.11-00-01.admin.G326.r13.avi 19:12:01
+[camsim] ch17: 1501틱, 조각 16개 → out_multi
+== ch18 meva_multi/2018-03-07.10-55-01.11-00-01.bus.G505.r13.avi 19:15:22
+[camsim] ch18: 1501틱, 조각 1개 → out_multi
+== ch19 meva_multi/2018-03-07.10-55-01.11-00-01.bus.G506.r13.avi 19:18:33
+[camsim] ch19: 1501틱, 조각 119개 → out_multi
+== ch20 meva_multi/2018-03-07.10-55-01.11-00-01.bus.G509.r13.avi 19:22:05
+[camsim] ch20: 1501틱, 조각 32개 → out_multi
+== ch21 meva_multi/2018-03-07.10-55-04.11-00-04.hospital.G341.r13.avi 19:25:19
+[camsim] ch21: 1500틱, 조각 108개 → out_multi
+== ch22 meva_multi/2018-03-07.10-55-06.11-00-06.bus.G340.r13.avi 19:28:55
+[camsim] ch22: 1500틱, 조각 78개 → out_multi
+== ch23 meva_multi/2018-03-07.10-55-07.11-00-07.hospital.G301.r13.avi 19:31:46
+[camsim] ch23: 1500틱, 조각 12개 → out_multi
+DONE 19:34:25
