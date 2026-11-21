@@ -58,8 +58,8 @@ ApplicationWindow {
         const enc = encodeURIComponent(q)
         let pending = mode === "compare" ? 2 : 1
         const done = function () { if (--pending === 0) busy = false }
-        if (mode !== "frame") get("/search?index=event&k=12" + (verify ? "&verify=10" : "") + "&q=" + enc, function (r) { evRes = r; done() })
-        if (mode !== "event") get("/search?index=frame&k=12" + (verify ? "&verify=10" : "") + "&q=" + enc, function (r) { frRes = r; done() })
+        if (mode !== "frame") get("/search?index=event&k=12" + (verify ? "&verify=10&step=3&stop=0.7" : "") + "&q=" + enc, function (r) { evRes = r; done() })
+        if (mode !== "event") get("/search?index=frame&k=12" + (verify ? "&verify=10&step=3&stop=0.7" : "") + "&q=" + enc, function (r) { frRes = r; done() })
     }
     function pick(h, kind) {
         sel = h; selKind = kind
@@ -216,7 +216,7 @@ ApplicationWindow {
                     color: win.verify ? c.event : c.bg
                     border.color: win.verify ? c.event : c.border
                     Text { anchors.centerIn: parent; font.pixelSize: 12; font.bold: true
-                           text: win.verify ? "VLM 검증 켜짐 (상위 10명)" : "VLM 검증 꺼짐"
+                           text: win.verify ? "VLM 검증 켜짐 (애매할 때만)" : "VLM 검증 꺼짐"
                            color: win.verify ? "white" : c.sub }
                     MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor
                                 onClicked: { win.verify = !win.verify; if (query.text !== "") win.search() } }
