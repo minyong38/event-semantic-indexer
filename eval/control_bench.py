@@ -6,6 +6,10 @@
                      실제 시간대로 재생, 실제 베스트샷을 ONNX로 임베딩 → 검색 반영 지연(예정 시각 → 완료)
   두 방식 모두 같은 ONNX Runtime 설정(세션당 1스레드)·같은 워커 수.
 
+  --mix N: 체육관 복제 대신 실제 클립(fragments_ch*) N개를 채널에 돌아가며 배정 (빈 카메라 포함)
+     python control_bench.py --mix 24 --clip-sec 300 --frags ../camsim/out_multi --video <영상> \
+         --model ../model/clip_image.onnx --event ~/idx_multi --frame ~/idx_multi_frame --cases ...
+
   python control_bench.py --frags ../camsim/out_raw --video ../camsim/meva_raw/<G330>.avi \
       --model ../model/clip_image.onnx --event ~/idx_stB --frame ~/idx_frame --dur 60
 """
@@ -89,6 +93,38 @@ def trace_times(idx, frags, kind):
     return sorted(t - t0 for t in ts)
 
 
+def trace_by_ch(idx, frags, kind):
+    """채널별 임베딩 발생 시각 (클립 시작 기준 초). 이벤트는 조각 끝 + 잇기 대기 1초."""
+    last = {}
+    for f in Path(frags).glob("fragments_ch*.jsonl"):
+        for l in open(f):
+            d = json.loads(l)
+            last[(d["ch"], d["cam_id"])] = d["last_t"]
+    by = {}
+    for l in open(Path(idx).expanduser() / "items.jsonl"):
+        it = json.loads(l)
+        ch = it["ch"]
+        t = (max(last.get((ch, m), 0) for m in it["members"]) + 1.0) if kind == "event" else float(it["t"])
+        by.setdefault(ch, []).append(t)
+    return {ch: sorted(v) for ch, v in by.items()}
+
+
+def make_schedule_mix(by_ch, nclips, clip_sec, channels, dur, seed=0):
+    rng = random.Random(seed)
+    sched = []
+    for c in range(channels):
+        trace = by_ch.get(c % nclips, [])  # 빈 카메라면 부하 0
+        off = rng.uniform(0, clip_sec)
+        n = 0
+        while trace:
+            base = n * clip_sec - off
+            if base > dur:
+                break
+            sched += [base + t for t in trace if 0 <= base + t < dur]
+            n += 1
+    return sorted(sched)
+
+
 def load(model, inputs, schedule, workers, dur, ready, out):
     import onnxruntime as ort
     so = ort.SessionOptions()
@@ -162,13 +198,22 @@ def main():
     ap.add_argument("--dur", type=float, default=60)
     ap.add_argument("--workers", type=int, default=4, help="인덱싱에 주는 코어 수")
     ap.add_argument("--cases", default="none,event:16,frame:16,event:64")
+    ap.add_argument("--mix", type=int, default=0, help="실제 클립 N개를 채널에 돌아가며 배정")
+    ap.add_argument("--clip-sec", type=float, default=300)
     args = ap.parse_args()
 
     import cv2
-    shots = sorted((Path(args.frags) / "bestshots" / "ch0").glob("*.jpg"))[:64]
+    shots = sorted((Path(args.frags) / "bestshots").glob("ch*/*.jpg"))[:64]
     inputs = [preprocess(cv2.imread(str(p))) for p in shots]
-    traces = {"event": trace_times(args.event, args.frags, "event"),
-              "frame": trace_times(args.frame, args.frags, "frame")}
+    if args.mix:
+        mixed = {k: trace_by_ch(getattr(args, k), args.frags, k) for k in ("event", "frame")}
+        for k, v in mixed.items():
+            tot = sum(len(x) for x in v.values())
+            print(f"[mix] {k}: 클립 {args.mix}개 평균 {tot / args.mix / args.clip_sec:.2f}/초·채널 "
+                  f"(빈 클립 {args.mix - len(v)}개)", flush=True)
+    else:
+        traces = {"event": trace_times(args.event, args.frags, "event"),
+                  "frame": trace_times(args.frame, args.frags, "frame")}
 
     rows = []
     for case in args.cases.split(","):
@@ -178,7 +223,8 @@ def main():
         procs = [mp.Process(target=probe, args=(args.video, args.dur, ready, out_p))]
         sched = []
         if kind != "none":
-            sched = make_schedule(traces[kind], ch, args.dur)
+            sched = (make_schedule_mix(mixed[kind], args.mix, args.clip_sec, ch, args.dur) if args.mix
+                     else make_schedule(traces[kind], ch, args.dur))
             procs.append(mp.Process(target=load, args=(args.model, inputs, sched, args.workers,
                                                        args.dur, ready, out_l)))
         for p in procs:

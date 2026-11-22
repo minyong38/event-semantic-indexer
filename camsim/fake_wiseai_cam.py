@@ -15,6 +15,7 @@
   --break-rate  보이는 1분당 강제 ID 끊김 횟수 (추적 끊김)
   --id-gap      이 시간 이상 안 보이면 새 ID (실측 3.6초)
   --shot-scale  베스트샷 해상도 배율 (1.0 = 원본, 0.5 = 절반)
+  --realtime    실시간: 시각을 지금으로 바꾸고 영상 속도대로 내보냄 (줄마다 바로 씀 → 검색 서버 --live가 따라 읽음)
 
 출력 (out_dir):
   meta_ch{N}.xmls       한 줄에 MetadataStream 문서 1개 (파서에 그대로 넣을 수 있음)
@@ -27,6 +28,7 @@
 import argparse
 import json
 import random
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -141,6 +143,7 @@ def main():
     ap.add_argument("--break-rate", type=float, default=0.0, help="보이는 1분당 강제 끊김")
     ap.add_argument("--shot-scale", type=float, default=1.0)
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--realtime", action="store_true", help="실시간 모드 (검색 서버 --live용)")
     args = ap.parse_args()
 
     from ultralytics import YOLO  # 무거워서 여기서 import
@@ -149,8 +152,9 @@ def main():
     out = Path(args.out)
     shot_dir = out / "bestshots" / f"ch{args.ch}"
     shot_dir.mkdir(parents=True, exist_ok=True)
-    meta_f = open(out / f"meta_ch{args.ch}.xmls", "w", encoding="utf-8")
-    frag_f = open(out / f"fragments_ch{args.ch}.jsonl", "w", encoding="utf-8")
+    buffering = 1 if args.realtime else -1  # 실시간이면 줄 단위로 바로 씀
+    meta_f = open(out / f"meta_ch{args.ch}.xmls", "w", encoding="utf-8", buffering=buffering)
+    frag_f = open(out / f"fragments_ch{args.ch}.jsonl", "w", encoding="utf-8", buffering=buffering)
 
     cap = cv2.VideoCapture(args.video)
     fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
@@ -158,6 +162,10 @@ def main():
     h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     step = max(1, round(fps / args.hz))
     start = datetime.fromisoformat(args.start).replace(tzinfo=timezone.utc)
+    if args.realtime:  # 영상 0초 = 지금
+        start = datetime.now(timezone.utc)
+        (out / "start.txt").write_text(f"{start.timestamp():.3f}\n")
+    wall0 = time.time()
     p_break = args.break_rate / 60.0 / args.hz  # 틱당 강제 끊김 확률
 
     model = YOLO(args.model)
@@ -201,6 +209,10 @@ def main():
         if (idx - 1) % step:
             continue
         stats["ticks"] += 1
+        if args.realtime:  # 영상 속 시각이 될 때까지 기다렸다가 내보냄
+            delay = wall0 + t - time.time()
+            if delay > 0:
+                time.sleep(delay)
 
         objs = []
         seen = set()
@@ -230,8 +242,9 @@ def main():
         if objs:  # 실측: 화면에 객체가 없으면 객체 프레임은 안 옴
             meta_f.write(frame_doc(start + timedelta(seconds=t), w, h, "".join(objs)) + "\n")
 
-    for frag in active.values():
-        retire(frag, frag.last_t)
+    if not args.realtime:  # 실시간이면 영상이 끝나도 화면에 남은 사람은 아직 안 나간 것 → 요약 안 보냄
+        for frag in active.values():
+            retire(frag, frag.last_t)
     meta_f.close()
     frag_f.close()
     print(f"[camsim] ch{args.ch}: {stats['ticks']}틱, 조각 {stats['fragments']}개 → {out}")

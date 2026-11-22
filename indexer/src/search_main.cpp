@@ -2,7 +2,7 @@
 //
 //   GET /search?q=<영어 문장>&index=event|frame&k=12[&verify=10]
 //       verify=N: 임베딩 상위 N명 사진을 VLM 서비스에 보내 "질문에 맞나?" 점수(P(yes))로 다시 줄 세움
-//       parse=1: 질문을 온톨로지(config/ontology.json) 칸으로 쪼갬 — 장소·시각·색은 동의어 사전과 정규식(규칙),
+//       parse=1 (기본, --parse로 바꿈): 질문을 온톨로지(config/ontology.json) 칸으로 쪼갬 — 장소·시각·색은 동의어 사전과 정규식(규칙),
 //                남은 묘사가 한국어면 VLM 서비스 /translate로 영어 번역만. parse=2: LLM(/parse)이 전부 (비교용)
 //                {장소, 이후·이전 시각, 상의·하의 색, 설명} → 장소·시각은 검색 전에 후보를 거르는 하드 필터,
 //                설명(장소·시각을 뺀 모습)만 임베딩·VLM 검증에 씀. 색은 어두운 곳에서 부정확해 기록만.
@@ -11,6 +11,14 @@
 //   GET /img/event/<label>   그룹 대표 베스트샷 (파일 그대로)
 //   GET /img/frame/<label>   그 시각 영상 프레임에서 사람 크롭 (메타데이터 박스)
 //   GET /info                인덱스별 임베딩 수
+//   GET /live[?reset=1]      실시간 모드 상태: 받은 줄·사람 수, 반영 지연(사람이 마지막으로 보인 뒤 검색되기까지) 분해
+//                            reset=1이면 지연 기록·카운터를 비우고 새로 잰다 (인덱스는 그대로)
+//
+// 실시간 모드 (--live <폴더>): 카메라(대역 카메라·재생기)가 그 폴더에 쓰는 메타데이터를 따라 읽으면서
+//   사람이 확정될 때마다 임베딩해 이벤트 인덱스에 바로 추가한다(hnswlib addPoint). 검색은 읽기 잠금,
+//   추가는 쓰기 잠금이라 검색하는 동안에도 계속 들어온다. --event를 비우면 빈 인덱스에서 시작.
+//   TZ=Asia/Seoul search_server --live ~/live_out --videos ../camsim/meva_multi --image-model ../model/clip_image.onnx \
+//                 --text ../model/clip_text.onnx --vocab ../model/bpe_simple_vocab_16e6.txt
 //
 //   search_server --event ~/idx_stB --frame ~/idx_frame --frags ../camsim/out_raw \
 //                 --videos ../camsim/meva_raw --text ../model/clip_text.onnx \
@@ -31,7 +39,9 @@
 #include <map>
 #include <mutex>
 #include <regex>
+#include <deque>
 #include <set>
+#include <shared_mutex>
 #include <sstream>
 #include <string>
 #include <thread>
@@ -45,6 +55,7 @@
 
 #include "http_client.hpp"
 #include "http_server.hpp"
+#include "live_indexer.hpp"
 #include "metadata_parser.hpp"
 #include "summary.hpp"
 #include "text_embedder.hpp"
@@ -58,11 +69,16 @@ struct Args {
     std::string event, frame, frags, videos, text, vocab;
     std::string start = "2026-11-19T09:00:00";
     std::string tokens, query, index = "event";
-    std::string vlm;  // VLM 서비스 주소 (비우면 검증·질문 해석 안 함)
-    std::string ontology = "../config/ontology.json";
-    int parse = 0;
+    std::string vlm = "http://localhost:8766";  // VLM 서비스 (기본 켜짐; --vlm "" 이면 끔 — 검증·한국어 번역 안 함)
+    std::string ontology;                        // 비우면 config/ontology.json → ../config/ontology.json 순서로 찾음
+    int parse = 1;                               // 질문 해석 기본값 (요청에 parse가 없을 때): 1 규칙, 0 끔, 2 LLM
     int port = 8765, k = 12, threads = 1, verify = 0, step = 0;
     double stop = 2.0;  // 2.0 = 멈추지 않음 (고정 N명)
+    // 실시간 모드
+    std::string live, image_model = "../model/clip_image.onnx";
+    int live_threads = 4, min_shot_h = 64;
+    double min_dur = 0.5, link_sec = 1.0;
+    float link_dist = 0.03f;
 };
 
 Args parseArgs(int argc, char** argv) {
@@ -88,6 +104,13 @@ Args parseArgs(int argc, char** argv) {
         else if (k == "--stop") a.stop = std::stod(v);
         else if (k == "--ontology") a.ontology = v;
         else if (k == "--parse") a.parse = std::stoi(v);
+        else if (k == "--live") a.live = v;
+        else if (k == "--image-model") a.image_model = v;
+        else if (k == "--live-threads") a.live_threads = std::stoi(v);
+        else if (k == "--min-dur") a.min_dur = std::stod(v);
+        else if (k == "--min-shot-h") a.min_shot_h = std::stoi(v);
+        else if (k == "--link-sec") a.link_sec = std::stod(v);
+        else if (k == "--link-dist") a.link_dist = std::stof(v);
         else std::fprintf(stderr, "알 수 없는 인자 %s\n", k.c_str());
     }
     return a;
@@ -163,6 +186,23 @@ struct AllowFilter : hnswlib::BaseFilterFunctor {
     bool operator()(hnswlib::labeltype id) override { return id < ok->size() && (*ok)[id]; }
 };
 
+double wallNow() {
+    return std::chrono::duration<double>(std::chrono::system_clock::now().time_since_epoch()).count();
+}
+// epoch 초 → 그 지역 시각의 하루 중 초 (TZ 환경 변수 따름)
+double localSec(double epoch) {
+    const std::time_t tt = static_cast<std::time_t>(std::floor(epoch));
+    std::tm lt{};
+    localtime_r(&tt, &lt);
+    return lt.tm_hour * 3600 + lt.tm_min * 60 + lt.tm_sec + (epoch - std::floor(epoch));
+}
+json pct(std::vector<double> v) {  // p50·p95·최대 (초)
+    if (v.empty()) return nullptr;
+    std::sort(v.begin(), v.end());
+    auto at = [&](double q) { return std::round(v.at(static_cast<size_t>(q * (v.size() - 1))) * 1000) / 1000; };
+    return json{{"p50", at(0.5)}, {"p95", at(0.95)}, {"max", at(1.0)}, {"n", v.size()}};
+}
+
 int hhmm(const std::string& s) { return std::stoi(s.substr(0, 2)) * 3600 + std::stoi(s.substr(3, 2)) * 60; }
 std::string hhmmss(double sec) {
     const int t = static_cast<int>(sec);
@@ -176,8 +216,9 @@ public:
     explicit SearchService(const Args& a) : text_(a.text, a.vocab, a.threads) {
         if (!a.vlm.empty() && parseHostPort(a.vlm, vlm_host_, vlm_port_))
             std::fprintf(stderr, "[search] VLM 서비스 %s:%d\n", vlm_host_.c_str(), vlm_port_);
-        idx_["event"] = loadIndex(expand(a.event));
-        idx_["frame"] = loadIndex(expand(a.frame));
+        if (!a.event.empty()) idx_["event"] = loadIndex(expand(a.event));
+        else idx_["event"] = Index{};  // 실시간 모드: 빈 인덱스 (첫 사람이 들어올 때 만듦)
+        if (!a.frame.empty()) idx_["frame"] = loadIndex(expand(a.frame));
 
         for (const auto& e : fs::directory_iterator(a.videos)) {
             const auto ext = e.path().extension();
@@ -185,9 +226,12 @@ public:
         }
         std::sort(videos_.begin(), videos_.end());  // 대역 카메라와 같은 순서 = 채널 번호
 
-        // 온톨로지: 장소 이름표. 없으면 질문 해석(parse) 끔
-        if (fs::exists(a.ontology)) {
-            onto_ = json::parse(readFile(a.ontology));
+        // 온톨로지: 장소 이름표·동의어 사전. 없으면 질문 해석(parse)은 시각만
+        std::string onto_path = a.ontology;
+        for (const char* cand : {"config/ontology.json", "../config/ontology.json"})
+            if (onto_path.empty() && fs::exists(cand)) onto_path = cand;
+        if (!onto_path.empty() && fs::exists(onto_path)) {
+            onto_ = json::parse(readFile(onto_path));
             std::fprintf(stderr, "[search] 온톨로지 v%d: 장소 %zu곳\n", onto_.value("version", 0), onto_["sites"].size());
             auto alt = [](std::vector<std::string> ws) {  // 긴 단어 먼저, 정규식 특수문자 이스케이프
                 std::sort(ws.begin(), ws.end(), [](auto& x, auto& y) { return x.size() > y.size(); });
@@ -225,14 +269,16 @@ public:
             chName_.push_back("CH" + std::to_string(ch + 1) + (ko.empty() ? "" : " " + ko) + (cam.empty() ? "" : " " + cam));
         }
 
-        for (const auto& e : fs::directory_iterator(a.frags)) {
-            const std::string name = e.path().filename().string();
-            if (name.rfind("fragments_ch", 0) != 0) continue;
-            std::ifstream f(e.path());
-            for (std::string l; std::getline(f, l);) {
-                const json d = json::parse(l);
-                frags_[key(d["ch"].get<int>(), d["cam_id"].get<int>())] =
-                    {d["first_t"].get<double>(), d["last_t"].get<double>(), d["true_id"].get<int>()};
+        if (!a.frags.empty()) {  // 조각 정보(보인 시각·진짜 인물 번호) — 저장된 인덱스용, 실시간 모드에선 없어도 됨
+            for (const auto& e : fs::directory_iterator(a.frags)) {
+                const std::string name = e.path().filename().string();
+                if (name.rfind("fragments_ch", 0) != 0) continue;
+                std::ifstream f(e.path());
+                for (std::string l; std::getline(f, l);) {
+                    const json d = json::parse(l);
+                    frags_[key(d["ch"].get<int>(), d["cam_id"].get<int>())] =
+                        {d["first_t"].get<double>(), d["last_t"].get<double>(), d["true_id"].get<int>()};
+                }
             }
         }
 
@@ -242,13 +288,14 @@ public:
         ss >> std::get_time(&tm, "%Y-%m-%dT%H:%M:%S");
         const double t0 = static_cast<double>(timegm(&tm));
         for (size_t ch = 0; ch < videos_.size(); ++ch) {
+            caps_.emplace_back();
+            if (a.frags.empty()) continue;
             std::ifstream f(fs::path(a.frags) / ("meta_ch" + std::to_string(ch) + ".xmls"));
             for (std::string l; std::getline(f, l);) {
                 if (l.find("<tt:ImageRef>") != std::string::npos) continue;
                 const double t = parseUtc(l) - t0;
                 boxes_[key(static_cast<int>(ch), std::llround(t * 1000))] = MetadataParser::parse(l);
             }
-            caps_.emplace_back();
         }
         for (auto& [kind, ix] : idx_) {  // 라벨별 채널·보인 시각 (필터용)
             for (const json& it : ix.items) {
@@ -271,8 +318,8 @@ public:
                 ix.t1.push_back(base + tl);
             }
         }
-        std::fprintf(stderr, "[search] event %zu개 / frame %zu개 / 채널 %zu개 로드\n", idx_["event"].items.size(),
-                     idx_["frame"].items.size(), videos_.size());
+        std::fprintf(stderr, "[search] event %zu개 / frame %zu개 / 채널 %zu개 로드\n", idx_.at("event").items.size(),
+                     idx_.count("frame") ? idx_.at("frame").items.size() : 0, videos_.size());
     }
 
     const ClipTokenizer& tokenizer() const { return text_.tokenizer(); }
@@ -281,20 +328,39 @@ public:
     json search(const std::string& q, const std::string& kind, int k, int verify = 0, int step = 0, double stop = 2.0,
                 int parse = 0) {
         const auto t0 = std::chrono::steady_clock::now();
-        Index& ix = idx_.at(kind);
 
-        // ⓪ 질문 해석: 온톨로지 칸으로 쪼개 하드 필터 + 검색할 설명
+        // ⓪ 질문 해석: 온톨로지 칸으로 쪼개 하드 필터 + 검색할 설명 (인덱스를 안 건드려서 잠금 밖)
         json parsed = nullptr;
-        std::string text = q;
-        std::vector<char> ok;
-        size_t allowed = ix.items.size();
+        std::string text = q, site;
+        int after = -1, before = -1;
         if (parse) {
             parsed = parse == 2 ? parseQuery(q) : ruleParse(q);
             if (parsed.contains("description") && parsed["description"].is_string())
                 text = parsed["description"].get<std::string>();
-            const std::string site = parsed.value("site", json()).is_string() ? parsed["site"].get<std::string>() : "";
-            const int after = parsed.value("after", json()).is_string() ? hhmm(parsed["after"]) : -1;
-            const int before = parsed.value("before", json()).is_string() ? hhmm(parsed["before"]) : -1;
+            site = parsed.value("site", json()).is_string() ? parsed["site"].get<std::string>() : "";
+            after = parsed.value("after", json()).is_string() ? hhmm(parsed["after"]) : -1;
+            before = parsed.value("before", json()).is_string() ? hhmm(parsed["before"]) : -1;
+        }
+
+        std::vector<float> v;
+        {
+            std::lock_guard<std::mutex> lk(text_mutex_);
+            v = text_.embed(text);
+        }
+
+        std::vector<json> hits;
+        size_t allowed = 0, total = 0;
+        double search_ms = 0;
+        {
+            // 읽기 잠금: 실시간 모드에서 사람이 추가되는 동안(쓰기 잠금)만 잠깐 기다린다
+            std::shared_lock<std::shared_mutex> lk(idx_mutex_);
+            auto found = idx_.find(kind);
+            if (found == idx_.end())  // 실시간 모드엔 프레임 인덱스가 없다 → 빈 결과 + 안내 (화면이 깨지지 않게)
+                return json{{"error", kind + " 인덱스 없음 (실시간 모드는 이벤트만)"}, {"hits", json::array()},
+                            {"embedded", 0}, {"search_ms", 0.0}, {"ms", ms(t0)}, {"vlm", nullptr}, {"unique", 0}};
+            Index& ix = found->second;
+            total = allowed = ix.items.size();
+            std::vector<char> ok;
             if (!site.empty() || after >= 0 || before >= 0) {
                 ok.assign(ix.items.size(), 0);
                 allowed = 0;
@@ -307,62 +373,67 @@ public:
                     allowed += pass;
                 }
             }
-        }
+            const size_t want = std::min<size_t>(std::max(k, verify), allowed);
+            AllowFilter filt;
+            filt.ok = &ok;
+            std::priority_queue<std::pair<float, hnswlib::labeltype>> pq;
+            if (want > 0 && ix.hnsw) pq = ix.hnsw->searchKnn(v.data(), want, ok.empty() ? nullptr : &filt);
+            std::vector<std::pair<float, size_t>> res;
+            while (!pq.empty()) { res.push_back({pq.top().first, pq.top().second}); pq.pop(); }
+            std::reverse(res.begin(), res.end());  // 가까운 순
+            search_ms = ms(t0);
 
-        std::vector<float> v;
-        {
-            std::lock_guard<std::mutex> lk(text_mutex_);
-            v = text_.embed(text);
-        }
-        const size_t want = std::min<size_t>(std::max(k, verify), allowed);
-        AllowFilter filt;
-        filt.ok = &ok;
-        std::priority_queue<std::pair<float, hnswlib::labeltype>> pq;
-        if (want > 0) pq = ix.hnsw->searchKnn(v.data(), want, ok.empty() ? nullptr : &filt);
-        std::vector<std::pair<float, size_t>> res;
-        while (!pq.empty()) { res.push_back({pq.top().first, pq.top().second}); pq.pop(); }
-        std::reverse(res.begin(), res.end());  // 가까운 순
-        const double search_ms = ms(t0);
-
-        std::vector<json> hits;
-        int rank = 0;
-        for (const auto& [dist, label] : res) {
-            const json& it = ix.items[label];
-            const int ch = it["ch"].get<int>();
-            json h;
-            h["clip_rank"] = ++rank;
-            h["score"] = std::round((1.0 - dist) * 10000) / 10000;
-            h["label"] = label;
-            h["ch"] = ch;
-            h["channel"] = ch < static_cast<int>(chName_.size()) ? chName_[ch] : ("CH" + std::to_string(ch + 1));
-            h["site"] = ch < static_cast<int>(site_.size()) ? site_[ch] : "";
-            h["clock"] = hhmmss(ix.t0[label]);
-            h["img"] = "/img/" + kind + "/" + std::to_string(label);
-            h["video"] = fileUrl(videos_[ch]);
-            std::vector<int> members;
-            if (kind == "event") {
-                members = it["members"].get<std::vector<int>>();
-                h["top"] = it.value("top", "");
-                h["bottom"] = it.value("bottom", "");
-            } else {
-                members = {it["cam_id"].get<int>()};
-                h["top"] = h["bottom"] = "";
+            int rank = 0;
+            for (const auto& [dist, label] : res) {
+                const json& it = ix.items[label];
+                const int ch = it["ch"].get<int>();
+                json h;
+                h["clip_rank"] = ++rank;
+                h["score"] = std::round((1.0 - dist) * 10000) / 10000;
+                h["label"] = label;
+                h["ch"] = ch;
+                h["channel"] = ch < static_cast<int>(chName_.size()) ? chName_[ch] : ("CH" + std::to_string(ch + 1));
+                h["site"] = ch < static_cast<int>(site_.size()) ? site_[ch] : "";
+                h["clock"] = hhmmss(ix.t0[label]);
+                h["img"] = "/img/" + kind + "/" + std::to_string(label);
+                h["video"] = ch < static_cast<int>(videos_.size()) ? fileUrl(videos_[ch]) : "";
+                std::vector<int> members;
+                if (kind == "event") {
+                    members = it["members"].get<std::vector<int>>();
+                    h["top"] = it.value("top", "");
+                    h["bottom"] = it.value("bottom", "");
+                } else {
+                    members = {it["cam_id"].get<int>()};
+                    h["top"] = h["bottom"] = "";
+                }
+                if (it.contains("live")) {  // 실시간으로 들어온 사람: 시각은 메타데이터 그대로, 영상 위치는 재생 시작 기준
+                    const double s0 = live_start_.load();
+                    const double base = s0 > 0 ? s0 : it["t_first"].get<double>();
+                    h["t"] = std::max(0.0, it["t_first"].get<double>() - base);
+                    h["t_end"] = std::max(0.0, it["t_last"].get<double>() - base);
+                    h["live"] = true;
+                    h["members"] = members;
+                    h["person"] = "ch" + std::to_string(ch) + "-o" + std::to_string(members.front());
+                    hits.push_back(std::move(h));
+                    continue;
+                }
+                double tf = 1e18, tl = -1;
+                for (int m : members) {
+                    auto f = frags_.find(key(ch, m));
+                    if (f == frags_.end()) continue;
+                    tf = std::min(tf, f->second.first);
+                    tl = std::max(tl, f->second.last);
+                }
+                if (kind == "frame") tf = tl = it["t"].get<double>();
+                if (tl < 0) tf = tl = 0;
+                h["t"] = tf;
+                h["t_end"] = tl;
+                h["members"] = members;
+                auto f0 = frags_.find(key(ch, members.front()));
+                h["person"] = "ch" + std::to_string(ch) + "-" +
+                              (f0 != frags_.end() ? std::to_string(f0->second.true_id) : "?");
+                hits.push_back(std::move(h));
             }
-            double tf = 1e18, tl = -1;
-            for (int m : members) {
-                auto f = frags_.find(key(ch, m));
-                if (f == frags_.end()) continue;
-                tf = std::min(tf, f->second.first);
-                tl = std::max(tl, f->second.last);
-            }
-            if (kind == "frame") tf = tl = it["t"].get<double>();
-            h["t"] = tf;
-            h["t_end"] = tl;
-            h["members"] = members;
-            auto f0 = frags_.find(key(ch, members.front()));
-            h["person"] = "ch" + std::to_string(ch) + "-" +
-                          (f0 != frags_.end() ? std::to_string(f0->second.true_id) : "?");
-            hits.push_back(std::move(h));
         }
 
         json vlm_info = nullptr;
@@ -372,7 +443,7 @@ public:
         if (hits.size() > static_cast<size_t>(k)) hits.resize(k);
         json arr = json::array();
         std::set<std::string> persons;
-        rank = 0;
+        int rank = 0;
         for (json& h : hits) {
             h["rank"] = ++rank;
             persons.insert(h["person"].get<std::string>());
@@ -384,7 +455,7 @@ public:
         out["parsed"] = parsed;
         out["allowed"] = allowed;
         out["index"] = kind;
-        out["embedded"] = ix.items.size();
+        out["embedded"] = total;
         out["unique"] = persons.size();
         out["search_ms"] = search_ms;
         out["vlm"] = vlm_info;
@@ -449,9 +520,13 @@ public:
 
     // 결과 이미지 (jpg 바이트). 없으면 빈 문자열.
     std::string image(const std::string& kind, size_t label) {
-        Index& ix = idx_.at(kind);
-        if (label >= ix.items.size()) return "";
-        const json& it = ix.items[label];
+        json it;
+        {
+            std::shared_lock<std::shared_mutex> lk(idx_mutex_);
+            auto found = idx_.find(kind);
+            if (found == idx_.end() || label >= found->second.items.size()) return "";
+            it = found->second.items[label];  // 복사해 두고 잠금은 바로 푼다
+        }
         if (kind == "event") return readFile(it["shot"].get<std::string>());
 
         {
@@ -571,7 +646,120 @@ public:
 
     json info() {
         json j;
+        std::shared_lock<std::shared_mutex> lk(idx_mutex_);
         for (auto& [k, v] : idx_) j[k]["embedded"] = v.items.size();
+        j["live"] = static_cast<bool>(live_);
+        return j;
+    }
+
+    // ── 실시간 모드 ──────────────────────────────────────────────
+    void startLive(const Args& a) {
+        live_dir_ = expand(a.live);
+        LiveParams lp;
+        lp.dir = live_dir_;
+        lp.model = a.image_model;
+        lp.threads = a.live_threads;
+        lp.min_dur = a.min_dur;
+        lp.min_shot_h = a.min_shot_h;
+        lp.stitch.enabled = true;
+        lp.stitch.link_sec = a.link_sec;
+        lp.stitch.link_dist = a.link_dist;
+        live_ = std::make_unique<LiveIndexer>(lp, [this](LivePerson&& p) { addLive(std::move(p)); });
+        live_->start();
+    }
+
+    // 확정된 사람 1명을 이벤트 인덱스에 바로 추가 (쓰기 잠금 — 그동안만 검색이 잠깐 기다림)
+    void addLive(LivePerson&& p) {
+        {   // 재생기·대역 카메라가 적어 둔 스트림 시작 시각 (데모에서 영상 위치 계산용). 새 스트림이면 다시 읽음
+            std::error_code ec;
+            const fs::path sp = fs::path(live_dir_) / "start.txt";
+            const auto mt = fs::last_write_time(sp, ec);
+            if (!ec && mt != start_mtime_) {
+                std::ifstream f(sp);
+                double s0 = 0;
+                if (f >> s0) live_start_ = s0;
+                start_mtime_ = mt;
+            }
+        }
+        size_t label;
+        {
+            std::unique_lock<std::shared_mutex> lk(idx_mutex_);
+            Index& ix = idx_["event"];
+            if (!ix.hnsw) {
+                ix.space = std::make_unique<hnswlib::InnerProductSpace>(static_cast<int>(p.vec.size()));
+                ix.hnsw = std::make_unique<hnswlib::HierarchicalNSW<float>>(ix.space.get(), 4096, 16, 200);
+                ix.hnsw->setEf(200);
+            }
+            label = ix.items.size();
+            if (label >= ix.hnsw->getMaxElements()) ix.hnsw->resizeIndex(std::max<size_t>(label * 2, label + 1024));
+            ix.hnsw->addPoint(p.vec.data(), label);
+            json item = {{"label", label}, {"ch", p.ch}, {"cam_id", p.members.front()}, {"members", p.members},
+                         {"t_first", p.first_utc}, {"t_last", p.last_utc}, {"seen", p.seen_sec},
+                         {"top", p.top}, {"bottom", p.bottom}, {"shot", p.shot}, {"live", true}};
+            ix.items.push_back(std::move(item));
+            ix.ch.push_back(p.ch);
+            ix.t0.push_back(localSec(p.first_utc));
+            ix.t1.push_back(localSec(p.last_utc));
+        }
+        const double added = wallNow();
+        LiveRec r{label, p.ch, p.last_utc, p.summary_utc, p.summary_wall, p.ready_wall, added, p.embed_ms};
+        std::lock_guard<std::mutex> lk(live_mutex_);
+        live_recs_.push_back(r);
+        if (live_recs_.size() > 20000) live_recs_.pop_front();
+    }
+
+    void resetLive() {  // 측정 구간 새로 시작: 지연 기록·카운터를 비움 (인덱스는 그대로)
+        if (!live_) return;
+        live_->resetStats();
+        std::lock_guard<std::mutex> lk(live_mutex_);
+        live_recs_.clear();
+    }
+
+    // 반영 지연 분해: 사람이 마지막으로 보인 뒤 → 카메라 요약 프레임 → 그룹 확정 → 인덱스 추가(검색 가능)
+    json liveInfo() {
+        json j;
+        j["live"] = static_cast<bool>(live_);
+        if (!live_) return j;
+        const LiveIndexer::Stats st = live_->stats();
+        j["channels"] = st.channels;
+        j["lines"] = st.lines;
+        j["summaries"] = st.summaries;
+        j["groups"] = st.groups;
+        j["kept"] = st.kept;
+        j["drop_short"] = st.drop_short;
+        j["drop_small"] = st.drop_small;
+        {
+            std::shared_lock<std::shared_mutex> lk(idx_mutex_);
+            j["embedded"] = idx_.at("event").items.size();
+        }
+        std::vector<LiveRec> recs;
+        {
+            std::lock_guard<std::mutex> lk(live_mutex_);
+            recs.assign(live_recs_.begin(), live_recs_.end());
+        }
+        // 사람이 마지막으로 보임 →(카메라 판단)→ 요약 프레임 →(전달·읽기)→ 서버가 읽음 →(확정)→ 임베딩·추가 → 검색 가능
+        std::vector<double> total, camera, deliver, stitch, embed, after_camera;
+        for (const LiveRec& r : recs) {
+            total.push_back(r.added_wall - r.last_utc);
+            if (r.summary_utc > 0) {
+                camera.push_back(r.summary_utc - r.last_utc);         // 카메라가 "사라졌다"고 판단하는 시간
+                deliver.push_back(r.summary_wall - r.summary_utc);    // 요약 프레임이 서버에 읽히기까지
+                after_camera.push_back(r.added_wall - r.summary_utc); // 카메라가 알린 뒤 검색 가능까지 = 우리 시스템 몫
+            }
+            if (r.summary_wall > 0) stitch.push_back(r.ready_wall - r.summary_wall);
+            embed.push_back(r.added_wall - r.ready_wall);
+        }
+        j["latency_sec"] = {{"total", pct(total)}, {"camera", pct(camera)}, {"deliver", pct(deliver)},
+                            {"stitch", pct(stitch)}, {"embed_add", pct(embed)}, {"after_camera", pct(after_camera)}};
+        json recent = json::array();
+        for (size_t i = recs.size() > 8 ? recs.size() - 8 : 0; i < recs.size(); ++i) {
+            const LiveRec& r = recs[i];
+            recent.push_back({{"label", r.label},
+                              {"channel", r.ch < static_cast<int>(chName_.size()) ? chName_[r.ch] : "CH?"},
+                              {"left_at", hhmmss(localSec(r.last_utc))},
+                              {"searchable_after_sec", std::round((r.added_wall - r.last_utc) * 100) / 100}});
+        }
+        j["recent"] = recent;
         return j;
     }
 
@@ -595,6 +783,18 @@ private:
     std::unordered_map<long long, std::vector<Detection>> boxes_;
     std::vector<cv::VideoCapture> caps_;
     std::unordered_map<size_t, std::string> crop_cache_;
+    std::shared_mutex idx_mutex_;  // 인덱스: 검색은 읽기, 실시간 추가는 쓰기
+    struct LiveRec {
+        size_t label;
+        int ch;
+        double last_utc, summary_utc, summary_wall, ready_wall, added_wall, embed_ms;
+    };
+    std::mutex live_mutex_;
+    std::deque<LiveRec> live_recs_;
+    std::string live_dir_;
+    std::atomic<double> live_start_{-1};
+    fs::file_time_type start_mtime_{};  // start.txt를 마지막으로 읽은 때의 수정 시각 (실시간 스레드만 씀)
+    std::unique_ptr<LiveIndexer> live_;  // 마지막에 선언 → 가장 먼저 정리(스레드 종료)된다
 };
 
 std::atomic<bool> g_stop{false};
@@ -639,7 +839,7 @@ int main(int argc, char** argv) {
             const int verify = r.query.count("verify") ? std::stoi(r.query.at("verify")) : 0;
             const int step = r.query.count("step") ? std::stoi(r.query.at("step")) : 0;
             const double stop = r.query.count("stop") ? std::stod(r.query.at("stop")) : 2.0;
-            const int parse = r.query.count("parse") ? std::stoi(r.query.at("parse")) : 0;
+            const int parse = r.query.count("parse") ? std::stoi(r.query.at("parse")) : a.parse;  // 기본: 온톨로지 켬
             if (q == r.query.end() || q->second.empty() || (kind != "event" && kind != "frame")) {
                 res.code = 400;
                 res.body = R"({"error":"q, index=event|frame"})";
@@ -647,7 +847,7 @@ int main(int argc, char** argv) {
             }
             const json out = svc.search(q->second, kind, k, verify, step, stop, parse);
             std::fprintf(stderr, "[search] %s \"%s\" %.1f ms%s\n", kind.c_str(), q->second.c_str(),
-                         out["ms"].get<double>(), verify ? (" (VLM " + std::to_string(verify) + "명)").c_str() : "");
+                         out.value("ms", 0.0), verify ? (" (VLM " + std::to_string(verify) + "명)").c_str() : "");
             res.body = out.dump();
         } else if (r.path.rfind("/img/", 0) == 0) {
             const std::string rest = r.path.substr(5);
@@ -659,11 +859,15 @@ int main(int argc, char** argv) {
             if (res.body.empty()) res.code = 404;
         } else if (r.path == "/info") {
             res.body = svc.info().dump();
+        } else if (r.path == "/live") {
+            if (r.query.count("reset") && r.query.at("reset") == "1") svc.resetLive();
+            res.body = svc.liveInfo().dump();
         } else {
             res.code = 404;
         }
         return res;
     });
+    if (!a.live.empty()) svc.startLive(a);
     if (!server.start()) return 1;
     std::fprintf(stderr, "[search] http://localhost:%d  (Ctrl+C 종료)\n", a.port);
     std::signal(SIGINT, [](int) { g_stop = true; });

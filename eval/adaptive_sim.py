@@ -41,7 +41,7 @@ if not args.no_fetch or not cache.exists():
     rows = []
     for i, item in enumerate(queries, 1):
         gt = set(item["gt"])
-        url = f"{args.server}/search?index={args.index}&k=20&verify=20&q=" + urllib.parse.quote(item["q"])
+        url = f"{args.server}/search?index={args.index}&k=20&verify=20&parse=0&q=" + urllib.parse.quote(item["q"])
         r = json.loads(urllib.request.urlopen(url, timeout=180).read())
         if r.get("vlm") and "error" in r["vlm"]:
             raise SystemExit(f"VLM 오류: {r['vlm']['error']} — vlm_service와 --vlm 옵션 확인")

@@ -43,7 +43,7 @@ for kind in args.index:
         firsts, total_ms, calls, errs = [], [], 0, 0
         for item in queries:
             gt = set(item["gt"])
-            url = f"{args.server}/search?index={kind}&k={K}{q_extra}&q=" + urllib.parse.quote(item["q"])
+            url = f"{args.server}/search?index={kind}&k={K}{q_extra}&parse=0&q=" + urllib.parse.quote(item["q"])
             t0 = time.perf_counter()
             r = json.loads(urllib.request.urlopen(url, timeout=180).read())
             total_ms.append((time.perf_counter() - t0) * 1000)

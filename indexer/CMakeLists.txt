@@ -26,6 +26,7 @@ target_link_libraries(indexer PRIVATE ${OpenCV_LIBS} ${ORT_DIR}/lib/libonnxrunti
 set_target_properties(indexer PROPERTIES BUILD_RPATH "${ORT_DIR}/lib")
 
 # 검색 서버: 자연어 → CLIP 텍스트 인코더(C++ BPE 토크나이저) → hnswlib → HTTP(JSON·이미지)
+#   실시간 모드(--live): 메타데이터를 따라 읽으며 잇기·임베딩해 인덱스에 바로 추가 (live_indexer + 인덱서와 같은 부품)
 find_package(Threads REQUIRED)
 add_executable(search_server
   src/search_main.cpp
@@ -34,7 +35,10 @@ add_executable(search_server
   src/http_server.cpp
   src/http_client.cpp
   src/summary.cpp
-  src/metadata_parser.cpp)
+  src/metadata_parser.cpp
+  src/live_indexer.cpp
+  src/embedder.cpp
+  src/stitcher.cpp)
 target_include_directories(search_server PRIVATE src ${ORT_DIR}/include ${HNSW_DIR} ${CMAKE_SOURCE_DIR}/../third_party)
 target_link_libraries(search_server PRIVATE ${OpenCV_LIBS} ${ORT_DIR}/lib/libonnxruntime.so Threads::Threads)
 set_target_properties(search_server PROPERTIES BUILD_RPATH "${ORT_DIR}/lib")

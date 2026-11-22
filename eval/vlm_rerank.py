@@ -71,7 +71,7 @@ calls, vlm_ms = {"event": 0, "frame": 0}, {"event": 0.0, "frame": 0.0}
 for qi, item in enumerate(queries, 1):
     q, gt = item["q"], set(item["gt"])
     for kind in ("event", "frame"):
-        r = json.loads(get(f"/search?index={kind}&k={D}&q=" + urllib.parse.quote(q)))
+        r = json.loads(get(f"/search?index={kind}&k={D}&parse=0&q=" + urllib.parse.quote(q)))
         hits = r["hits"]
         ps = []
         for h in hits:

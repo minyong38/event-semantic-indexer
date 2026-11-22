@@ -27,7 +27,7 @@ ApplicationWindow {
 
     property string server: typeof serverUrl !== "undefined" ? serverUrl : "http://localhost:8765"
     property string mode: "compare"            // event | frame | compare
-    property bool verify: false                // VLM 검증: 상위 10명만 VLM에 물어 재정렬
+    property bool verify: true                 // VLM 검증: 애매할 때만 상위 후보를 VLM에 물어 재정렬 (기본 켬)
     property var evRes: null
     property var frRes: null
     property var sel: null                     // 선택한 결과 1건
@@ -39,7 +39,7 @@ ApplicationWindow {
         const x = new XMLHttpRequest()
         x.onreadystatechange = function () {
             if (x.readyState !== XMLHttpRequest.DONE) return
-            if (x.status === 200) cb(JSON.parse(x.responseText))
+            if (x.status === 200) { status.text = "연결됨 · " + server; cb(JSON.parse(x.responseText)) }
             else { busy = false; status.text = "서버 응답 없음 (" + server + ")" }
         }
         x.open("GET", server + path)
@@ -92,10 +92,25 @@ ApplicationWindow {
                 Text {
                     color: c.sub; font.pixelSize: 12
                     text: {
-                        const n = win.info[col.kind] ? win.info[col.kind].embedded.toLocaleString(Qt.locale(), "f", 0) : "-"
+                        // 실시간 모드에선 사람이 계속 늘어나므로 검색 응답의 수를 우선
+                        const cnt = col.res && col.res.embedded !== undefined ? col.res.embedded
+                                  : (win.info[col.kind] ? win.info[col.kind].embedded : undefined)
+                        const n = cnt === undefined ? "-" : cnt.toLocaleString(Qt.locale(), "f", 0)
+                        if (col.res && col.res.error) return col.res.error
                         if (!col.res) return "임베딩 " + n + "개"
                         let s = "임베딩 " + n + "개 · 검색 " + col.res.search_ms.toFixed(1) + " ms"
                         if (col.res.vlm) s += col.res.vlm.error ? " · VLM 실패" : " · VLM " + col.res.vlm.calls + "장 " + col.res.vlm.ms.toFixed(0) + " ms"
+                        // 온톨로지: 질문에서 뽑은 장소·시각과 남은 후보 수, 한국어면 번역된 검색어
+                        const p = col.res.parsed
+                        if (p && (p.site || p.after || p.before)) {
+                            const ko = { school: "학교", bus: "버스 정류장", hospital: "병원", admin: "사무동" }
+                            let f = []
+                            if (p.site) f.push(ko[p.site] || p.site)
+                            if (p.after) f.push(p.after + " 이후")
+                            if (p.before) f.push(p.before + " 이전")
+                            s += " · " + f.join(" ") + " → 후보 " + col.res.allowed + "명"
+                        }
+                        if (p && p.translated_from) s += " · 검색어 \"" + col.res.searched_text + "\""
                         return s
                     }
                 }
@@ -186,10 +201,10 @@ ApplicationWindow {
                 Text { text: "카메라 메타데이터(퇴장 시 베스트샷)로 만든 인덱스를 자연어로 검색"; color: c.sub
                        font.pixelSize: 12; wrapMode: Text.Wrap; Layout.fillWidth: true }
                 Item { height: 4 }
-                Text { text: "질문 (영어)"; color: c.sub; font.pixelSize: 11; font.bold: true }
+                Text { text: "질문 (한국어·영어)"; color: c.sub; font.pixelSize: 11; font.bold: true }
                 TextField {
                     id: query; Layout.fillWidth: true
-                    placeholderText: "a person in a red jacket"
+                    placeholderText: "버스 정류장에서 가방 든 사람"
                     color: c.text; font.pixelSize: 13
                     background: Rectangle { color: c.bg; radius: 3; border.color: query.activeFocus ? c.accent : c.border }
                     onAccepted: win.search()
