@@ -1,0 +1,17 @@
+{
+  "about": "관제에 등록된 카메라 목록. 챗봇은 여기 있는 카메라만 제어한다. 탐색(WS-Discovery)으로 찾았는데 여기 없으면 '등록 안 된 카메라'. 주소는 devsim/fake_cams.py 기본값(127.0.0.1:9101~).",
+  "cameras": [
+    {"no": 1,  "id": "G299", "site": "school",   "host": "127.0.0.1", "port": 9101, "ptz": false},
+    {"no": 2,  "id": "G328", "site": "school",   "host": "127.0.0.1", "port": 9102, "ptz": false},
+    {"no": 3,  "id": "G330", "site": "school",   "host": "127.0.0.1", "port": 9103, "ptz": false},
+    {"no": 4,  "id": "G340", "site": "bus",      "host": "127.0.0.1", "port": 9104, "ptz": false},
+    {"no": 5,  "id": "G505", "site": "bus",      "host": "127.0.0.1", "port": 9105, "ptz": true, "presets": 4},
+    {"no": 6,  "id": "G506", "site": "bus",      "host": "127.0.0.1", "port": 9106, "ptz": true, "presets": 4},
+    {"no": 7,  "id": "G509", "site": "bus",      "host": "127.0.0.1", "port": 9107, "ptz": false},
+    {"no": 8,  "id": "G301", "site": "hospital", "host": "127.0.0.1", "port": 9108, "ptz": false},
+    {"no": 9,  "id": "G341", "site": "hospital", "host": "127.0.0.1", "port": 9109, "ptz": true, "presets": 4},
+    {"no": 10, "id": "G436", "site": "hospital", "host": "127.0.0.1", "port": 9110, "ptz": false},
+    {"no": 11, "id": "G326", "site": "admin",    "host": "127.0.0.1", "port": 9111, "ptz": false},
+    {"no": 12, "id": "G329", "site": "admin",    "host": "127.0.0.1", "port": 9112, "ptz": false}
+  ]
+}

@@ -42,3 +42,16 @@ add_executable(search_server
 target_include_directories(search_server PRIVATE src ${ORT_DIR}/include ${HNSW_DIR} ${CMAKE_SOURCE_DIR}/../third_party)
 target_link_libraries(search_server PRIVATE ${OpenCV_LIBS} ${ORT_DIR}/lib/libonnxruntime.so Threads::Threads)
 set_target_properties(search_server PROPERTIES BUILD_RPATH "${ORT_DIR}/lib")
+
+# 챗봇 서버: 말 한 문장 → 규칙(온톨로지·정규식) → 모르면 로컬 LLM(Ollama, JSON 스키마로 선택지 고정) → 도구 하나 실행
+#   도구: 사람 검색(search_server /search) · 카메라 탐색(ONVIF WS-Discovery) · 카메라 제어(SUNAPI) · 등록
+#   OpenCV·ONNX Runtime 없이 빌드된다
+add_executable(chat_server
+  src/chat_main.cpp
+  src/chat_rules.cpp
+  src/wsdiscovery.cpp
+  src/sunapi.cpp
+  src/http_server.cpp
+  src/http_client.cpp)
+target_include_directories(chat_server PRIVATE src ${CMAKE_SOURCE_DIR}/../third_party)
+target_link_libraries(chat_server PRIVATE Threads::Threads)

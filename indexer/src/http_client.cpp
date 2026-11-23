@@ -5,6 +5,7 @@
 #include <sys/time.h>
 #include <unistd.h>
 
+#include <cctype>
 #include <cstring>
 #include <sstream>
 
@@ -25,8 +26,10 @@ bool parseHostPort(const std::string& url, std::string& host, int& port) {
     return !host.empty() && port > 0;
 }
 
-HttpResult httpPost(const std::string& host, int port, const std::string& path, const std::string& body,
-                    const std::string& content_type, int timeout_ms) {
+namespace {
+
+HttpResult httpRequest(const char* method, const std::string& host, int port, const std::string& path,
+                       const std::string& body, const std::string& content_type, int timeout_ms) {
     HttpResult r;
     addrinfo hints{}, *res = nullptr;
     hints.ai_family = AF_INET;
@@ -53,11 +56,11 @@ HttpResult httpPost(const std::string& host, int port, const std::string& path, 
     ::freeaddrinfo(res);
 
     std::ostringstream req;
-    req << "POST " << path << " HTTP/1.0\r\n"
-        << "Host: " << host << "\r\n"
-        << "Content-Type: " << content_type << "\r\n"
-        << "Content-Length: " << body.size() << "\r\n"
-        << "Connection: close\r\n\r\n";
+    req << method << " " << path << " HTTP/1.0\r\n"
+        << "Host: " << host << "\r\n";
+    if (!content_type.empty()) req << "Content-Type: " << content_type << "\r\n";
+    if (!body.empty() || std::strcmp(method, "POST") == 0) req << "Content-Length: " << body.size() << "\r\n";
+    req << "Connection: close\r\n\r\n";
     const std::string head = req.str();
     for (const std::string* part : {&head, &body}) {
         const char* p = part->data();
@@ -97,4 +100,30 @@ HttpResult httpPost(const std::string& host, int port, const std::string& path, 
     r.code = std::atoi(resp.c_str() + sp + 1);
     r.body = resp.substr(hdr_end + 4);
     return r;
+}
+
+}  // namespace
+
+HttpResult httpPost(const std::string& host, int port, const std::string& path, const std::string& body,
+                    const std::string& content_type, int timeout_ms) {
+    return httpRequest("POST", host, port, path, body, content_type, timeout_ms);
+}
+
+HttpResult httpGet(const std::string& host, int port, const std::string& path, int timeout_ms) {
+    return httpRequest("GET", host, port, path, "", "", timeout_ms);
+}
+
+std::string urlEncode(const std::string& s) {
+    static const char* hex = "0123456789ABCDEF";
+    std::string out;
+    for (unsigned char c : s) {
+        if (std::isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') {
+            out += static_cast<char>(c);
+        } else {
+            out += '%';
+            out += hex[c >> 4];
+            out += hex[c & 15];
+        }
+    }
+    return out;
 }

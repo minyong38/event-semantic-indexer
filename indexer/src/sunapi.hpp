@@ -1,0 +1,17 @@
+#pragma once
+
+#include <string>
+
+// 한화 SUNAPI(HTTP GET /stw-cgi/...)로 카메라를 제어한다.
+//  - 초점: 다보이조(sunapi_focus.cpp)가 실제 카메라에 보냈던 SimpleFocus 요청과 같은 형식
+//  - 프리셋·줌: SUNAPI 형식을 따른 명령 (devsim/fake_cams.py에서만 검증)
+// 인증은 생략했다(시뮬레이터). 실제 카메라는 HTTP Digest가 필요하다 — 다보이조는 libcurl CURLAUTH_DIGEST.
+struct SunapiResult {
+    bool ok = false;
+    std::string detail;  // 실패 사유 또는 카메라 응답 첫 줄
+};
+
+SunapiResult sunapiFocus(const std::string& host, int port, int channel);
+SunapiResult sunapiPreset(const std::string& host, int port, int channel, int preset);
+SunapiResult sunapiZoom(const std::string& host, int port, int channel, int steps);  // +확대 / -축소
+SunapiResult sunapiDeviceInfo(const std::string& host, int port, int timeout_ms, std::string* model);

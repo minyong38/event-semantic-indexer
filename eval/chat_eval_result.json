@@ -1,0 +1,30 @@
+[
+ {
+  "label": "llm qwen3.5:4b",
+  "n": 46,
+  "full": 42,
+  "tool": 42,
+  "llm_group": 5,
+  "refuse_ok": 6,
+  "wrong_proposals": 0,
+  "llm_calls": 46,
+  "p50_ms": 563.5999999999999,
+  "p95_ms": 602.0,
+  "llm_p50_ms": 563.55,
+  "raw_refuse_miss": 2
+ },
+ {
+  "label": "llm qwen3.5:9b",
+  "n": 46,
+  "full": 45,
+  "tool": 45,
+  "llm_group": 6,
+  "refuse_ok": 6,
+  "wrong_proposals": 0,
+  "llm_calls": 46,
+  "p50_ms": 768.1500000000001,
+  "p95_ms": 794.8,
+  "llm_p50_ms": 767.95,
+  "raw_refuse_miss": 0
+ }
+]

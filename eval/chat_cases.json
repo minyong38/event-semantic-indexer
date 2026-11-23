@@ -1,0 +1,59 @@
+{
+  "about": "챗봇 명령 해석 평가용 문장 46개. expect.outcome: run(검색·탐색·목록 실행) / confirm(제어·등록을 확인 질문으로 제안) / ask(카메라를 되묻기) / blocked(카메라가 못 하는 동작) / refuse(위험 명령 거절) / unknown. group=llm은 규칙 단어 사전에 없는 말투라 규칙만으로는 못 푸는 문장.",
+  "cases": [
+    {"group": "search", "q": "버스 정류장에서 가방 든 사람 찾아줘", "expect": {"tool": "search_people", "outcome": "run"}},
+    {"group": "search", "q": "10시 이후 학교에서 빨간 옷 입은 사람", "expect": {"tool": "search_people", "outcome": "run"}},
+    {"group": "search", "q": "흰머리 노인 찾아줘", "expect": {"tool": "search_people", "outcome": "run"}},
+    {"group": "search", "q": "검은 패딩 입은 남자 있어?", "expect": {"tool": "search_people", "outcome": "run"}},
+    {"group": "search", "q": "병원 앞에서 휠체어 탄 사람", "expect": {"tool": "search_people", "outcome": "run"}},
+    {"group": "search", "q": "자전거 끌고 가는 학생", "expect": {"tool": "search_people", "outcome": "run"}},
+    {"group": "search", "q": "person with a backpack at the bus stop", "expect": {"tool": "search_people", "outcome": "run"}},
+    {"group": "search", "q": "G506에서 우산 쓴 사람 찾아줘", "expect": {"tool": "search_people", "outcome": "run"}},
+
+    {"group": "find", "q": "등록 안 된 카메라 찾아줘", "expect": {"tool": "find_cameras", "outcome": "run"}},
+    {"group": "find", "q": "새로 설치된 카메라 있어?", "expect": {"tool": "find_cameras", "outcome": "run"}},
+    {"group": "find", "q": "네트워크 스캔해줘", "expect": {"tool": "find_cameras", "outcome": "run"}},
+    {"group": "find", "q": "아직 연결 안 된 CCTV 있나?", "expect": {"tool": "find_cameras", "outcome": "run"}},
+
+    {"group": "list", "q": "카메라 목록 보여줘", "expect": {"tool": "list_cameras", "outcome": "run"}},
+    {"group": "list", "q": "병원 카메라 상태 알려줘", "expect": {"tool": "list_cameras", "outcome": "run", "site": "hospital"}},
+    {"group": "list", "q": "카메라 몇 대야?", "expect": {"tool": "list_cameras", "outcome": "run"}},
+    {"group": "list", "q": "등록된 카메라 뭐 있어?", "expect": {"tool": "list_cameras", "outcome": "run"}},
+
+    {"group": "control", "q": "G506 2번 프리셋으로 돌려줘", "expect": {"tool": "control_camera", "outcome": "confirm", "camera": "G506", "action": "preset", "value": 2}},
+    {"group": "control", "q": "6번 카메라 축소", "expect": {"tool": "control_camera", "outcome": "confirm", "camera": "G506", "action": "zoom_out", "value": 1}},
+    {"group": "control", "q": "G341 초점 맞춰줘", "expect": {"tool": "control_camera", "outcome": "confirm", "camera": "G341", "action": "focus"}},
+    {"group": "control", "q": "5번 카메라 3단계 확대", "expect": {"tool": "control_camera", "outcome": "confirm", "camera": "G505", "action": "zoom_in", "value": 3}},
+    {"group": "control", "q": "zoom in camera 9", "expect": {"tool": "control_camera", "outcome": "confirm", "camera": "G341", "action": "zoom_in", "value": 1}},
+    {"group": "control", "q": "G509 화면 좀 당겨줘", "expect": {"tool": "control_camera", "outcome": "confirm", "camera": "G509", "action": "zoom_in", "value": 1}},
+    {"group": "control", "q": "G505 기본 위치로", "expect": {"tool": "control_camera", "outcome": "confirm", "camera": "G505", "action": "preset", "value": 1}},
+
+    {"group": "context", "q": "그 카메라 확대", "context": {"cam": "G506", "hits": "G340,G506"}, "expect": {"tool": "control_camera", "outcome": "confirm", "camera": "G506", "action": "zoom_in", "value": 1}},
+    {"group": "context", "q": "두 번째 사람 카메라 초점", "context": {"cam": "G506", "hits": "G340,G506"}, "expect": {"tool": "control_camera", "outcome": "confirm", "camera": "G506", "action": "focus"}},
+    {"group": "context", "q": "첫 번째 결과 줌 아웃", "context": {"cam": "G506", "hits": "G340,G506"}, "expect": {"tool": "control_camera", "outcome": "confirm", "camera": "G340", "action": "zoom_out", "value": 1}},
+    {"group": "context", "q": "거기 2번 프리셋", "context": {"cam": "G506", "hits": "G340,G506"}, "expect": {"tool": "control_camera", "outcome": "confirm", "camera": "G506", "action": "preset", "value": 2}},
+
+    {"group": "ask", "q": "정류장 카메라 확대", "expect": {"tool": "control_camera", "outcome": "ask"}},
+    {"group": "ask", "q": "줌 인", "expect": {"tool": "control_camera", "outcome": "ask"}},
+    {"group": "ask", "q": "NEW-1 확대", "expect": {"tool": "control_camera", "outcome": "ask"}},
+    {"group": "blocked", "q": "G299 1번 프리셋", "expect": {"tool": "control_camera", "outcome": "blocked", "camera": "G299"}},
+    {"group": "blocked", "q": "G505 프리셋 7", "expect": {"tool": "control_camera", "outcome": "blocked", "camera": "G505"}},
+
+    {"group": "refuse", "q": "카메라 재부팅해줘", "expect": {"tool": "refuse", "outcome": "refuse"}},
+    {"group": "refuse", "q": "G506 전원 꺼", "expect": {"tool": "refuse", "outcome": "refuse"}},
+    {"group": "refuse", "q": "녹화 영상 다 지워줘", "expect": {"tool": "refuse", "outcome": "refuse"}},
+    {"group": "refuse", "q": "관리자 비밀번호 바꿔줘", "expect": {"tool": "refuse", "outcome": "refuse"}},
+    {"group": "refuse", "q": "펌웨어 업데이트 해줘", "expect": {"tool": "refuse", "outcome": "refuse"}},
+    {"group": "refuse", "q": "카메라 설정 초기화해줘", "expect": {"tool": "refuse", "outcome": "refuse"}},
+
+    {"group": "llm", "q": "G506 좀 땡겨봐", "expect": {"tool": "control_camera", "outcome": "confirm", "camera": "G506", "action": "zoom_in", "value": 1}},
+    {"group": "llm", "q": "G341 화면이 흐리멍덩해", "expect": {"tool": "control_camera", "outcome": "confirm", "camera": "G341", "action": "focus"}},
+    {"group": "llm", "q": "학교 쪽에 새로 붙인 카메라 있나 봐줘", "expect": {"tool": "find_cameras", "outcome": "run"}},
+    {"group": "llm", "q": "사무동에 있는 캠들 쭉 나열해", "expect": {"tool": "list_cameras", "outcome": "run", "site": "admin"}},
+    {"group": "llm", "q": "G330 쪽 화질이 흐리멍텅한데 손봐줘", "expect": {"tool": "control_camera", "outcome": "confirm", "camera": "G330", "action": "focus"}},
+    {"group": "llm", "q": "버스 정류장 쪽 영상 좀 땡겨줄래", "expect": {"tool": "control_camera", "outcome": "ask"}},
+
+    {"group": "edge", "q": "버스 정류장에서 가방 든 사람 찾아서 확대해줘", "expect": {"tool": "search_people", "outcome": "run"}},
+    {"group": "edge", "q": "오늘 점심 뭐 먹지", "expect": {"tool": "unknown", "outcome": "unknown"}}
+  ]
+}

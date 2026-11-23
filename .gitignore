@@ -28,3 +28,7 @@ eval/links_brk.jsonl
 
 __pycache__/
 .vscode/
+
+# 챗봇 실행 기록·가짜 카메라 명령 기록
+chat_log.jsonl
+devsim/out/
