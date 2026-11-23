@@ -506,18 +506,48 @@ private:
             out["reply"] = "등록할 카메라를 아직 못 찾았어요. 먼저 '등록 안 된 카메라 찾아줘'라고 해 주세요.";
             return out;
         }
+        // 탐색 목록(s.unregistered)은 사용자가 본 순서 그대로 둔다("첫 번째"가 가리키는 대상이 바뀌지 않게).
+        // 그 사이 등록된 카메라는 고를 때 빼고, 이름·순번으로 다시 가리키면 "이미 등록"이라고 답한다.
+        auto isReg = [&](const WsdDevice& u) {
+            return std::any_of(cams_.begin(), cams_.end(),
+                               [&](const Camera& c) { return c.host == u.host && c.port == u.port; });
+        };
         const WsdDevice* d = nullptr;
         for (const auto& name : in.cams)
             for (const auto& u : s.unregistered)
                 if (u.name == name) d = &u;
+        if (!d && !in.cams.empty()) {  // 이름을 댔는데 탐색 목록에 없으면 다른 카메라로 추측하지 않는다
+            out["reply"] = in.cams[0] + ": 등록 안 된 카메라 목록에 없어요. 이미 등록됐거나 아직 못 찾은 카메라예요.";
+            return out;
+        }
         if (!d && in.ordinal >= 0 && in.ordinal < static_cast<int>(s.unregistered.size()))
             d = &s.unregistered[in.ordinal];
-        if (!d && s.unregistered.size() == 1) d = &s.unregistered[0];
         if (!d) {
-            std::string list;
-            for (const auto& u : s.unregistered) list += (list.empty() ? "" : ", ") + u.name;
-            out["need_camera"] = true;
-            out["reply"] = "찾은 카메라가 여러 대예요: " + list + ". 어느 카메라를 등록할까요?";
+            std::vector<const WsdDevice*> remain;
+            for (const auto& u : s.unregistered)
+                if (!isReg(u)) remain.push_back(&u);
+            if (remain.empty()) {
+                out["reply"] = "찾은 카메라는 이제 모두 등록돼 있어요.";
+                return out;
+            }
+            if (remain.size() == 1) {
+                d = remain[0];
+            } else {
+                std::string list;
+                json names = json::array();
+                for (const WsdDevice* u : remain) {
+                    list += (list.empty() ? "" : ", ") + u->name;
+                    names.push_back(u->name);
+                }
+                out["need_camera"] = true;
+                out["candidates"] = names;
+                out["reply"] = "찾은 카메라가 여러 대예요: " + list + ". 어느 카메라를 등록할까요?";
+                return out;
+            }
+        }
+        if (isReg(*d)) {
+            out["camera"] = d->name;
+            out["reply"] = d->name + ": 이미 등록돼 있어요.";
             return out;
         }
         int no = 0;
@@ -579,6 +609,9 @@ private:
                       {"score", hit.value("score", 0.0)},
                       {"img", a_.search + hit.value("img", "")}};
             if (hit.contains("vlm")) x["vlm"] = hit["vlm"];
+            // 화면(QML 데모)이 결과를 누르면 그 시각 영상을 틀 수 있게 검색 서버 값을 그대로 넘긴다
+            for (const char* f : {"video", "t", "t_end", "members", "top", "bottom"})
+                if (hit.contains(f)) x[f] = hit[f];
             results.push_back(x);
             hit_cams.push_back(cam);
             if (static_cast<int>(results.size()) >= a_.k) break;

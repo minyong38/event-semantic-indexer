@@ -5,6 +5,7 @@ import QtMultimedia
 
 // 이벤트 기반 의미 검색 데모 — 다보이조 검색 화면과 같은 3단(조건 | 결과 | 상세·재생)
 // 서버: C++ search_server (WSL) — /search, /img, /info
+// 위 탭 "관제 챗봇": C++ chat_server (WSL) — /chat, /chat/confirm, /chat/cancel (ChatPanel.qml)
 ApplicationWindow {
     id: win
     width: 1500; height: 900; visible: true
@@ -26,6 +27,8 @@ ApplicationWindow {
     }
 
     property string server: typeof serverUrl !== "undefined" ? serverUrl : "http://localhost:8765"
+    property string chat: typeof chatUrl !== "undefined" ? chatUrl : "http://localhost:8770"
+    property string view: "search"             // search: 검색 비교 | chat: 관제 챗봇
     property string mode: "compare"            // event | frame | compare
     property bool verify: true                 // VLM 검증: 애매할 때만 상위 후보를 VLM에 물어 재정렬 (기본 켬)
     property var evRes: null
@@ -45,6 +48,8 @@ ApplicationWindow {
         x.open("GET", server + path)
         x.send()
     }
+    // 검색 서버는 /img/... 같은 경로를, 챗봇은 http://... 전체 주소를 준다
+    function imgUrl(p) { return !p ? "" : (p.indexOf("http") === 0 ? p : server + p) }
     function mmss(sec) {
         const s = Math.max(0, Math.floor(sec))
         return String(Math.floor(s / 60)).padStart(2, "0") + ":" + String(s % 60).padStart(2, "0")
@@ -188,136 +193,172 @@ ApplicationWindow {
         }
     }
 
-    RowLayout {
-        anchors.fill: parent; anchors.margins: 14; spacing: 12
+    ColumnLayout {
+        anchors.fill: parent; anchors.margins: 14; spacing: 10
 
-        // ── 좌: 검색 조건 ──
-        Rectangle {
-            Layout.preferredWidth: 270; Layout.fillHeight: true
-            color: c.panel; radius: 4; border.color: c.border
-            ColumnLayout {
-                anchors.fill: parent; anchors.margins: 14; spacing: 10
-                Text { text: "의미 검색"; color: c.text; font.pixelSize: 18; font.bold: true }
-                Text { text: "카메라 메타데이터(퇴장 시 베스트샷)로 만든 인덱스를 자연어로 검색"; color: c.sub
-                       font.pixelSize: 12; wrapMode: Text.Wrap; Layout.fillWidth: true }
-                Item { height: 4 }
-                Text { text: "질문 (한국어·영어)"; color: c.sub; font.pixelSize: 11; font.bold: true }
-                TextField {
-                    id: query; Layout.fillWidth: true
-                    placeholderText: "버스 정류장에서 가방 든 사람"
-                    color: c.text; font.pixelSize: 13
-                    background: Rectangle { color: c.bg; radius: 3; border.color: query.activeFocus ? c.accent : c.border }
-                    onAccepted: win.search()
+        // ── 위: 화면 고르기 ──
+        RowLayout {
+            Layout.fillWidth: true; spacing: 6
+            Repeater {
+                model: [["search", "검색 비교"], ["chat", "관제 챗봇"]]
+                Rectangle {
+                    required property var modelData
+                    Layout.preferredWidth: 120; Layout.preferredHeight: 32; radius: 3
+                    color: win.view === modelData[0] ? c.accent : c.panel
+                    border.color: win.view === modelData[0] ? c.accent : c.border
+                    Text { anchors.centerIn: parent; text: modelData[1]; font.pixelSize: 13; font.bold: true
+                           color: win.view === modelData[0] ? "white" : c.sub }
+                    MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: win.view = modelData[0] }
                 }
-                Text { text: "보기"; color: c.sub; font.pixelSize: 11; font.bold: true }
-                RowLayout {
-                    Layout.fillWidth: true; spacing: 4
-                    Repeater {
-                        model: [["compare", "비교"], ["event", "이벤트"], ["frame", "프레임"]]
-                        Rectangle {
-                            required property var modelData
-                            Layout.fillWidth: true; height: 30; radius: 3
-                            color: win.mode === modelData[0] ? c.accent : c.bg
-                            border.color: win.mode === modelData[0] ? c.accent : c.border
-                            Text { anchors.centerIn: parent; text: modelData[1]; font.pixelSize: 12; font.bold: true
-                                   color: win.mode === modelData[0] ? "white" : c.sub }
-                            MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor
-                                        onClicked: { win.mode = modelData[0]; if (query.text !== "") win.search() } }
+            }
+            Item { Layout.fillWidth: true }
+            Text { color: c.sub; font.pixelSize: 12
+                   text: win.view === "chat" ? "말로 찾고 → 확인하고 → 제어 · 결과를 누르면 오른쪽에서 그 시각 영상 재생"
+                                             : "같은 질문을 이벤트 방식(사람이 지나갈 때 1번)과 프레임 방식(초당 1번)으로 비교" }
+        }
+
+        RowLayout {
+            Layout.fillWidth: true; Layout.fillHeight: true; spacing: 12
+
+            // ── 좌: 검색 조건 ──
+            Rectangle {
+                visible: win.view === "search"
+                Layout.preferredWidth: 270; Layout.fillHeight: true
+                color: c.panel; radius: 4; border.color: c.border
+                ColumnLayout {
+                    anchors.fill: parent; anchors.margins: 14; spacing: 10
+                    Text { text: "의미 검색"; color: c.text; font.pixelSize: 18; font.bold: true }
+                    Text { text: "카메라 메타데이터(퇴장 시 베스트샷)로 만든 인덱스를 자연어로 검색"; color: c.sub
+                           font.pixelSize: 12; wrapMode: Text.Wrap; Layout.fillWidth: true }
+                    Item { height: 4 }
+                    Text { text: "질문 (한국어·영어)"; color: c.sub; font.pixelSize: 11; font.bold: true }
+                    TextField {
+                        id: query; Layout.fillWidth: true
+                        placeholderText: "버스 정류장에서 가방 든 사람"
+                        color: c.text; font.pixelSize: 13
+                        background: Rectangle { color: c.bg; radius: 3; border.color: query.activeFocus ? c.accent : c.border }
+                        onAccepted: win.search()
+                    }
+                    Text { text: "보기"; color: c.sub; font.pixelSize: 11; font.bold: true }
+                    RowLayout {
+                        Layout.fillWidth: true; spacing: 4
+                        Repeater {
+                            model: [["compare", "비교"], ["event", "이벤트"], ["frame", "프레임"]]
+                            Rectangle {
+                                required property var modelData
+                                Layout.fillWidth: true; height: 30; radius: 3
+                                color: win.mode === modelData[0] ? c.accent : c.bg
+                                border.color: win.mode === modelData[0] ? c.accent : c.border
+                                Text { anchors.centerIn: parent; text: modelData[1]; font.pixelSize: 12; font.bold: true
+                                       color: win.mode === modelData[0] ? "white" : c.sub }
+                                MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor
+                                            onClicked: { win.mode = modelData[0]; if (query.text !== "") win.search() } }
+                            }
                         }
                     }
-                }
-                Rectangle {
-                    Layout.fillWidth: true; height: 30; radius: 3
-                    color: win.verify ? c.event : c.bg
-                    border.color: win.verify ? c.event : c.border
-                    Text { anchors.centerIn: parent; font.pixelSize: 12; font.bold: true
-                           text: win.verify ? "VLM 검증 켜짐 (애매할 때만)" : "VLM 검증 꺼짐"
-                           color: win.verify ? "white" : c.sub }
-                    MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor
-                                onClicked: { win.verify = !win.verify; if (query.text !== "") win.search() } }
-                }
-                Rectangle {
-                    Layout.fillWidth: true; height: 36; radius: 3
-                    color: win.busy ? c.border : c.accent
-                    Text { anchors.centerIn: parent; text: win.busy ? "검색 중…" : "검색"; color: "white"; font.pixelSize: 14; font.bold: true }
-                    MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: if (!win.busy) win.search() }
-                }
-                Item { height: 6 }
-                Text { text: "예시 질문"; color: c.sub; font.pixelSize: 11; font.bold: true }
-                Repeater {
-                    model: ["a woman in a red top sitting", "a person in a neon green hoodie",
-                            "a person carrying white plastic bags", "an elderly woman with white hair sitting",
-                            "a person wearing a neon yellow beanie", "a person loading bags into a car"]
                     Rectangle {
-                        required property string modelData
-                        Layout.fillWidth: true; height: chipT.implicitHeight + 14; radius: 3
-                        color: c.bg; border.color: chipMa.containsMouse ? c.accent : c.border
-                        Text { id: chipT; x: 9; width: parent.width - 18; anchors.verticalCenter: parent.verticalCenter
-                               text: modelData; wrapMode: Text.Wrap; font.pixelSize: 12
-                               color: chipMa.containsMouse ? c.text : c.sub }
-                        MouseArea { id: chipMa; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
-                                    onClicked: win.search(modelData) }
+                        Layout.fillWidth: true; height: 30; radius: 3
+                        color: win.verify ? c.event : c.bg
+                        border.color: win.verify ? c.event : c.border
+                        Text { anchors.centerIn: parent; font.pixelSize: 12; font.bold: true
+                               text: win.verify ? "VLM 검증 켜짐 (애매할 때만)" : "VLM 검증 꺼짐"
+                               color: win.verify ? "white" : c.sub }
+                        MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor
+                                    onClicked: { win.verify = !win.verify; if (query.text !== "") win.search() } }
                     }
+                    Rectangle {
+                        Layout.fillWidth: true; height: 36; radius: 3
+                        color: win.busy ? c.border : c.accent
+                        Text { anchors.centerIn: parent; text: win.busy ? "검색 중…" : "검색"; color: "white"; font.pixelSize: 14; font.bold: true }
+                        MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: if (!win.busy) win.search() }
+                    }
+                    Item { height: 6 }
+                    Text { text: "예시 질문"; color: c.sub; font.pixelSize: 11; font.bold: true }
+                    Repeater {
+                        model: ["a woman in a red top sitting", "a person in a neon green hoodie",
+                                "a person carrying white plastic bags", "an elderly woman with white hair sitting",
+                                "a person wearing a neon yellow beanie", "a person loading bags into a car"]
+                        Rectangle {
+                            required property string modelData
+                            Layout.fillWidth: true; height: chipT.implicitHeight + 14; radius: 3
+                            color: c.bg; border.color: chipMa.containsMouse ? c.accent : c.border
+                            Text { id: chipT; x: 9; width: parent.width - 18; anchors.verticalCenter: parent.verticalCenter
+                                   text: modelData; wrapMode: Text.Wrap; font.pixelSize: 12
+                                   color: chipMa.containsMouse ? c.text : c.sub }
+                            MouseArea { id: chipMa; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+                                        onClicked: win.search(modelData) }
+                        }
+                    }
+                    Item { Layout.fillHeight: true }
+                    Text { id: status; text: "서버 연결 중…"; color: c.sub; font.pixelSize: 11; wrapMode: Text.Wrap; Layout.fillWidth: true }
                 }
-                Item { Layout.fillHeight: true }
-                Text { id: status; text: "서버 연결 중…"; color: c.sub; font.pixelSize: 11; wrapMode: Text.Wrap; Layout.fillWidth: true }
             }
-        }
 
-        // ── 중: 결과 ──
-        RowLayout {
-            Layout.fillWidth: true; Layout.fillHeight: true; spacing: 10
-            ResultColumn { visible: win.mode !== "frame"; Layout.fillWidth: true; Layout.fillHeight: true; kind: "event"; res: win.evRes }
-            ResultColumn { visible: win.mode !== "event"; Layout.fillWidth: true; Layout.fillHeight: true; kind: "frame"; res: win.frRes }
-        }
+            // ── 중: 결과 ──
+            RowLayout {
+                visible: win.view === "search"
+                Layout.fillWidth: true; Layout.fillHeight: true; spacing: 10
+                ResultColumn { visible: win.mode !== "frame"; Layout.fillWidth: true; Layout.fillHeight: true; kind: "event"; res: win.evRes }
+                ResultColumn { visible: win.mode !== "event"; Layout.fillWidth: true; Layout.fillHeight: true; kind: "frame"; res: win.frRes }
+            }
 
-        // ── 우: 상세·재생 ──
-        Rectangle {
-            Layout.preferredWidth: 380; Layout.fillHeight: true
-            color: c.panel; radius: 4; border.color: c.border
-            ColumnLayout {
-                anchors.fill: parent; anchors.margins: 14; spacing: 10
-                Text { text: "선택한 결과"; color: c.text; font.pixelSize: 15; font.bold: true }
-                Text { visible: !win.sel; text: "가운데에서 결과를 고르면 베스트샷과 그 시각 영상을 보여줍니다."
-                       color: c.sub; font.pixelSize: 12; wrapMode: Text.Wrap; Layout.fillWidth: true }
-                RowLayout {
-                    visible: win.sel !== null; Layout.fillWidth: true; spacing: 10
-                    Image { Layout.preferredWidth: 120; Layout.preferredHeight: 220
-                            source: win.sel ? win.server + win.sel.img : ""; fillMode: Image.PreserveAspectFit }
-                    Column {
-                        Layout.fillWidth: true; spacing: 5
-                        Text { text: win.sel ? win.sel.channel : ""; color: c.text; font.pixelSize: 14; font.bold: true }
-                        Text { text: win.sel ? (win.selKind === "event" ? "이벤트 인덱스" : "프레임 인덱스") : ""
-                               color: win.selKind === "event" ? c.event : c.frame; font.pixelSize: 12; font.bold: true }
-                        Text { text: win.sel ? "유사도 " + win.sel.score.toFixed(3) : ""; color: c.sub; font.pixelSize: 12 }
-                        Text { text: win.sel ? "영상 " + win.mmss(win.sel.t) + (win.sel.t_end > win.sel.t ? " ~ " + win.mmss(win.sel.t_end) : "") : ""
-                               color: c.sub; font.pixelSize: 12 }
-                        Text { visible: win.sel && win.sel.members.length > 1
-                               text: win.sel ? "끊긴 트랙 조각 " + win.sel.members.length + "개를 한 사람으로 이음" : ""
-                               color: c.event; font.pixelSize: 12; wrapMode: Text.Wrap; width: parent.width }
-                        Text { visible: win.sel && win.sel.top !== ""
-                               text: win.sel ? "옷 색 (카메라 메타데이터): " + win.sel.top + " / " + win.sel.bottom : ""
-                               color: c.sub; font.pixelSize: 12; wrapMode: Text.Wrap; width: parent.width }
+            // ── 좌+중 자리: 관제 챗봇 ──
+            ChatPanel {
+                visible: win.view === "chat"
+                Layout.fillWidth: true; Layout.fillHeight: true
+                chatServer: win.chat
+                onPickResult: function (hit) { win.pick(hit, "chat") }
+            }
+
+            // ── 우: 상세·재생 ──
+            Rectangle {
+                Layout.preferredWidth: 380; Layout.fillHeight: true
+                color: c.panel; radius: 4; border.color: c.border
+                ColumnLayout {
+                    anchors.fill: parent; anchors.margins: 14; spacing: 10
+                    Text { text: "선택한 결과"; color: c.text; font.pixelSize: 15; font.bold: true }
+                    Text { visible: !win.sel; text: win.view === "chat" ? "챗봇 검색 결과를 누르면 베스트샷과 그 시각 영상을 보여줍니다."
+                                                                        : "가운데에서 결과를 고르면 베스트샷과 그 시각 영상을 보여줍니다."
+                           color: c.sub; font.pixelSize: 12; wrapMode: Text.Wrap; Layout.fillWidth: true }
+                    RowLayout {
+                        visible: win.sel !== null; Layout.fillWidth: true; spacing: 10
+                        Image { Layout.preferredWidth: 120; Layout.preferredHeight: 220
+                                source: win.sel ? win.imgUrl(win.sel.img) : ""; fillMode: Image.PreserveAspectFit }
+                        Column {
+                            Layout.fillWidth: true; spacing: 5
+                            Text { text: win.sel ? win.sel.channel : ""; color: c.text; font.pixelSize: 14; font.bold: true }
+                            Text { text: win.sel ? ({ event: "이벤트 인덱스", frame: "프레임 인덱스", chat: "챗봇 검색 · 이벤트 인덱스" })[win.selKind] || "" : ""
+                                   color: win.selKind === "frame" ? c.frame : c.event; font.pixelSize: 12; font.bold: true }
+                            Text { text: win.sel ? "유사도 " + win.sel.score.toFixed(3) : ""; color: c.sub; font.pixelSize: 12 }
+                            Text { text: win.sel ? "영상 " + win.mmss(win.sel.t) + (win.sel.t_end > win.sel.t ? " ~ " + win.mmss(win.sel.t_end) : "") : ""
+                                   color: c.sub; font.pixelSize: 12 }
+                            Text { visible: win.sel !== null && (win.sel.members || []).length > 1
+                                   text: win.sel ? "끊긴 트랙 조각 " + (win.sel.members || []).length + "개를 한 사람으로 이음" : ""
+                                   color: c.event; font.pixelSize: 12; wrapMode: Text.Wrap; width: parent.width }
+                            Text { visible: win.sel !== null && (win.sel.top || "") !== ""
+                                   text: win.sel ? "옷 색 (카메라 메타데이터): " + win.sel.top + " / " + win.sel.bottom : ""
+                                   color: c.sub; font.pixelSize: 12; wrapMode: Text.Wrap; width: parent.width }
+                        }
                     }
-                }
-                Rectangle {
-                    Layout.fillWidth: true; Layout.fillHeight: true
-                    color: "black"; radius: 3; border.color: c.border
-                    VideoOutput { id: vout; anchors.fill: parent; anchors.margins: 1 }
-                    Text { visible: !win.sel; anchors.centerIn: parent; text: "영상"; color: c.sub }
-                }
-                RowLayout {
-                    Layout.fillWidth: true; spacing: 8
                     Rectangle {
-                        width: 32; height: 26; radius: 3; color: c.card; border.color: c.border
-                        Text { anchors.centerIn: parent; color: c.text
-                               text: player.playbackState === MediaPlayer.PlayingState ? "⏸" : "▶" }
-                        MouseArea { anchors.fill: parent
-                                    onClicked: player.playbackState === MediaPlayer.PlayingState ? player.pause() : player.play() }
+                        Layout.fillWidth: true; Layout.fillHeight: true
+                        color: "black"; radius: 3; border.color: c.border
+                        VideoOutput { id: vout; anchors.fill: parent; anchors.margins: 1 }
+                        Text { visible: !win.sel; anchors.centerIn: parent; text: "영상"; color: c.sub }
                     }
-                    Slider { Layout.fillWidth: true; from: 0; to: Math.max(1, player.duration); value: player.position
-                             onMoved: player.position = value }
-                    Text { text: win.mmss(player.position / 1000); color: c.sub; font.pixelSize: 12 }
+                    RowLayout {
+                        Layout.fillWidth: true; spacing: 8
+                        Rectangle {
+                            width: 32; height: 26; radius: 3; color: c.card; border.color: c.border
+                            Text { anchors.centerIn: parent; color: c.text
+                                   text: player.playbackState === MediaPlayer.PlayingState ? "⏸" : "▶" }
+                            MouseArea { anchors.fill: parent
+                                        onClicked: player.playbackState === MediaPlayer.PlayingState ? player.pause() : player.play() }
+                        }
+                        Slider { Layout.fillWidth: true; from: 0; to: Math.max(1, player.duration); value: player.position
+                                 onMoved: player.position = value }
+                        Text { text: win.mmss(player.position / 1000); color: c.sub; font.pixelSize: 12 }
+                    }
                 }
             }
         }

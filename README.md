@@ -163,6 +163,8 @@ CLIP은 사람만 잘라낸 사진을 보므로 "버스 정류장"을 구분하�
 
 가짜 카메라(`devsim/fake_cams.py`: 등록 12대 + 미등록 2대)에 제어 문장 14개를 실제로 보내고 확인까지 했을 때(`chat_eval.py --live`), 14건 모두 기대한 상태로 바뀌었고 엉뚱한 카메라로 간 명령은 0건이었다. 초점 명령은 요양원 프로젝트에서 실제 한화비전 카메라에 보냈던 SUNAPI `SimpleFocus`와 같은 형식이고, 프리셋·줌은 SUNAPI 형식을 따른 명령으로 가짜 카메라에서만 확인했다. 탐색은 같은 프로젝트의 Qt 클라이언트 WS-Discovery를 Qt 없이 옮겼다.
 
+화면은 QML 데모의 **관제 챗봇** 탭이다. 사람 검색 결과는 베스트샷 썸네일로 나오고, 누르면 오른쪽 칸에서 그 시각 영상이 재생된다. 카메라를 바꾸는 명령은 **실행 / 취소** 버튼(60초 안)을 눌러야 카메라로 가고, 장소에 카메라가 여러 대면 후보 버튼으로 고른다. 문장마다 누가 해석했는지(규칙 몇 ms / LLM 몇 ms / 위험 명령 가드)를 한 줄로 보여 주고, 대화 전체에서 규칙으로 끝난 문장과 LLM까지 간 문장 수를 센다.
+
 ## 구조
 
 ```
@@ -186,6 +188,7 @@ AI 카메라 (WiseAI 메타데이터)            ← 실험에서는 camsim/ 대
         │
         ▼
 [demo]  Qt Quick (QML) — 이벤트 / 프레임 결과 비교, 질문 해석 결과 표시, 원본 영상 재생
+        관제 챗봇 탭 ──HTTP──▶ [chat_server] (대화 · 검색 결과 썸네일 · 실행/취소 확인)
 
 [chat_server]  C++   말 한 문장 → 도구 하나
   ① 위험 명령 가드 (재부팅·전원·삭제·설정 변경) → 거절
@@ -211,7 +214,7 @@ AI 카메라 (WiseAI 메타데이터)            ← 실험에서는 camsim/ 대
 | 폴더 | 내용 |
 |---|---|
 | `indexer/` | C++ 인덱서(`indexer`) + 검색 서버(`search_server`, 실시간 모드 `live_indexer` 포함) + 챗봇 서버(`chat_server`) |
-| `demo/` | Qt Quick 검색 데모 클라이언트 |
+| `demo/` | Qt Quick 데모 클라이언트: 검색 비교(`Main.qml`) + 관제 챗봇 탭(`ChatPanel.qml`) |
 | `camsim/` | 대역 카메라: 영상 → YOLO + ByteTrack → WiseAI 형식 메타데이터·베스트샷, MEVA 다운로드(`meva_fetch.py`), 실시간 재생기(`live_replay.py`) |
 | `vlm/` | VLM 서비스: 후보 검증(`/verify`), 한국어 묘사 번역(`/translate`) |
 | `config/` | 온톨로지: 장소 동의어·색 단어·하드 필터 칸(`ontology.json`), 등록 카메라 목록(`devices.json`) |
@@ -267,7 +270,7 @@ python eval/chat_eval.py --live                          # 가짜 카메라에 �
 ```
 제어·등록은 `/chat` 응답의 `confirm_id`로 `/chat/confirm?id=...`를 불러야 실행된다(`/chat/cancel`로 취소).
 
-데모는 `demo/CMakeLists.txt`를 Qt Creator(Qt 6.5+, Quick·Multimedia)로 열어 실행합니다. 기본 서버 주소는 `http://localhost:8765`입니다.
+데모는 `demo/CMakeLists.txt`를 Qt Creator(Qt 6.5+, Quick·Multimedia)로 열어 실행합니다. 기본 서버 주소는 검색 `http://localhost:8765`, 챗봇 `http://localhost:8770`입니다(`search_demo.exe [검색 서버] [챗봇 서버]`).
 
 ## 한계
 - 정답 비율(recall)은 현장 2곳(체육관, 실외) 5분, 질문 30개로만 쟀습니다(직접 라벨링). 24클립(장소 4종)은 정답 표시 없이 잴 수 있는 임베딩 수·채널 용량·온톨로지·실시간 지연에 썼습니다.
