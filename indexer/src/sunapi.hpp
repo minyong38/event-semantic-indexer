@@ -14,4 +14,8 @@ struct SunapiResult {
 SunapiResult sunapiFocus(const std::string& host, int port, int channel);
 SunapiResult sunapiPreset(const std::string& host, int port, int channel, int preset);
 SunapiResult sunapiZoom(const std::string& host, int port, int channel, int steps);  // +확대 / -축소
+// 화질(밝기·대비·채도): imageenhancements view로 지금 값을 읽고 set으로 바꾼다 (가짜 카메라에서만 검증).
+// param = Brightness | Contrast | Saturation, relative면 value는 변화량. 결과는 0~100으로 자른다.
+SunapiResult sunapiImage(const std::string& host, int port, int channel, const std::string& param, int value,
+                         bool relative, int* before, int* after);
 SunapiResult sunapiDeviceInfo(const std::string& host, int port, int timeout_ms, std::string* model);

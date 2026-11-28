@@ -75,6 +75,15 @@ RuleParser::RuleParser(const json& onto) {
     zin_ = std::regex("줌\\s*인|zoom\\s*in|확대|크게|당겨|가까이|키워", kFlags);
     zout_ = std::regex("줌\\s*아웃|zoom\\s*out|축소|작게|넓게|멀리", kFlags);
     focus_ = std::regex("초점|포커스|focus|흐려|흐릿|뿌옇|선명", kFlags);
+    // 화질 (다보이조 Qt 클라이언트의 이미지 설정과 같은 세 가지)
+    bright_ = std::regex("밝기|밝게|어둡게|brightness|brighter|darker", kFlags);
+    contrast_ = std::regex("대비|명암|contrast", kFlags);
+    satur_ = std::regex("채도|색감|색\\s*(을|를)?\\s*(진하게|연하게|옅게)|saturation", kFlags);
+    up_ = std::regex("올려|높여|키워|늘려|밝게|진하게|강하게|세게|brighter|increase|\\bup\\b", kFlags);
+    down_ = std::regex("내려|낮춰|줄여|어둡게|연하게|옅게|약하게|darker|decrease|\\bdown\\b", kFlags);
+    toNum_ = std::regex("(\\d{1,4})\\s*(%|퍼센트)?\\s*(으로|로)", kFlags);
+    amount_ = std::regex("(\\d{1,3})\\s*(%|퍼센트)?\\s*(만큼|정도|씩)?\\s*(올려|높여|키워|늘려|내려|낮춰|줄여)", kFlags);
+    defaultImg_ = std::regex("기본\\s*값|기본\\s*(으로|로)|원래\\s*(대로|값)|중간\\s*(값|으로|로)", kFlags);
     steps_ = std::regex("(\\d+)\\s*(단계|칸|스텝|steps?)", kFlags);
 
     // 카메라 단서
@@ -117,6 +126,16 @@ bool RuleParser::forbidden(const std::string& text, std::string* word) const {
 
 bool RuleParser::action(const std::string& text, Intent* in) const {
     std::smatch m;
+    // 화질을 먼저 본다 — "키워·작게" 같은 말이 줌과 겹친다
+    const char* img = std::regex_search(text, bright_)     ? "brightness"
+                      : std::regex_search(text, contrast_) ? "contrast"
+                      : std::regex_search(text, satur_)    ? "saturation"
+                                                           : nullptr;
+    if (img) {
+        in->action = img;
+        imageValue(text, in);
+        return true;
+    }
     if (std::regex_search(text, m, preset_)) {
         in->action = "preset";
         for (int g : {1, 3, 4})
@@ -140,6 +159,27 @@ bool RuleParser::action(const std::string& text, Intent* in) const {
         return true;
     }
     return false;
+}
+
+void RuleParser::imageValue(const std::string& text, Intent* in) const {
+    std::smatch m;
+    in->relative = true;
+    in->value = 0;
+    if (std::regex_search(text, m, toNum_)) {  // "70으로" → 목표값 (범위는 실행 전에 막는다)
+        in->relative = false;
+        in->value = std::stoi(m.str(1));
+        return;
+    }
+    if (std::regex_search(text, defaultImg_)) {  // 기본값 = 중간 50 (다보이조 슬라이더 기본값)
+        in->relative = false;
+        in->value = 50;
+        return;
+    }
+    const bool up = std::regex_search(text, up_), down = std::regex_search(text, down_);
+    if (up == down) return;  // 방향을 모르면 0 → 되묻는다
+    int step = 10;
+    if (std::regex_search(text, m, amount_)) step = std::clamp(std::stoi(m.str(1)), 1, 50);
+    in->value = up ? step : -step;
 }
 
 void RuleParser::extractRefs(const std::string& text, const std::vector<Camera>& cams, Intent* in) const {
@@ -221,6 +261,7 @@ Intent RuleParser::parse(const std::string& text, const std::vector<Camera>& cam
         in.tool = "control_camera";
         in.action = act.action;
         in.value = act.value;
+        in.relative = act.relative;
         return in;
     }
     if (person) {

@@ -2,7 +2,9 @@
 
 #include "http_client.hpp"
 
+#include <algorithm>
 #include <atomic>
+#include <cstdlib>
 
 namespace {
 
@@ -61,6 +63,32 @@ SunapiResult sunapiZoom(const std::string& host, int port, int channel, int step
                 "/stw-cgi/ptzcontrol.cgi?msubmenu=relative&action=control&Channel=" + std::to_string(channel) +
                     "&Zoom=" + std::to_string(steps) + seq(),
                 3000);
+}
+
+SunapiResult sunapiImage(const std::string& host, int port, int channel, const std::string& param, int value,
+                         bool relative, int* before, int* after) {
+    const std::string ch = std::to_string(channel);
+    SunapiResult r;
+    const HttpResult h = httpGet(host, port, "/stw-cgi/image.cgi?msubmenu=imageenhancements&action=view&Channel=" + ch, 3000);
+    if (h.code != 200) {
+        r.detail = h.code == 0 ? (h.error.empty() ? "카메라 응답 없음" : h.error) : "HTTP " + std::to_string(h.code);
+        return r;
+    }
+    const std::string key = param + "=";
+    const size_t p = h.body.find(key);
+    if (p == std::string::npos) {
+        r.detail = "지금 " + param + " 값을 읽지 못함";
+        return r;
+    }
+    const int cur = std::atoi(h.body.c_str() + p + key.size());
+    const int next = std::clamp(relative ? cur + value : value, 0, 100);
+    r = call(host, port,
+             "/stw-cgi/image.cgi?msubmenu=imageenhancements&action=set&Channel=" + ch + "&" + param + "=" +
+                 std::to_string(next) + seq(),
+             3000);
+    if (before) *before = cur;
+    if (after) *after = next;
+    return r;
 }
 
 SunapiResult sunapiDeviceInfo(const std::string& host, int port, int timeout_ms, std::string* model) {

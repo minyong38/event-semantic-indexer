@@ -20,8 +20,9 @@ struct Camera {
 struct Intent {
     std::string tool = "unknown";   // search_people | find_cameras | list_cameras | control_camera
                                     // | register_camera | refuse | unknown
-    std::string action;             // zoom_in | zoom_out | focus | preset
-    int value = 0;                  // 프리셋 번호 / 줌 단계
+    std::string action;             // zoom_in | zoom_out | focus | preset | brightness | contrast | saturation
+    int value = 0;                  // 프리셋 번호 / 줌 단계 / 화질 값
+    bool relative = false;          // 화질: true면 value는 변화량(±), false면 목표값(0~100)
     std::vector<std::string> cams;  // 문장에 직접 나온 카메라 (G506, NEW-1, 없는 번호면 "#7")
     std::string site;               // 장소 키 (ontology sites)
     bool ref_context = false;       // "그 카메라", "거기"
@@ -44,12 +45,16 @@ public:
     // 하면 안 되는 명령인가 (재부팅·전원·삭제·설정 변경…) — 어떤 모드에서도 먼저 막는 가드
     bool forbidden(const std::string& text, std::string* word) const;
 
-    // 제어 동작 단어 (확대·축소·초점·프리셋)
+    // 제어 동작 단어 (확대·축소·초점·프리셋·밝기·대비·채도)
     bool action(const std::string& text, Intent* in) const;
+
+    // 화질 값: "70으로"=목표값, "올려/어둡게"=±10(또는 "20 올려"=±20), "원래대로"=50. 방향을 모르면 value 0(되묻기)
+    void imageValue(const std::string& text, Intent* in) const;
 
 private:
     std::vector<std::pair<std::string, std::regex>> sites_;
     std::regex refuse_, register_, discover_, list_, preset_, home_, zin_, zout_, focus_, steps_;
+    std::regex bright_, contrast_, satur_, up_, down_, toNum_, amount_, defaultImg_;
     std::regex camId_, newId_, camNo_, bareNo_, context_, person_;
     std::vector<std::regex> ordinals_;
 };

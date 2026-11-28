@@ -89,11 +89,18 @@ const char* kSystemPrompt =
     "- find_cameras: 네트워크에서 아직 등록 안 된 새 카메라를 찾는 요청\n"
     "- list_cameras: 등록된 카메라 목록이나 상태를 묻는 요청\n"
     "- control_camera: 카메라 화면을 바꾸는 요청. action은 zoom_in(확대), zoom_out(축소), focus(초점), "
-    "preset(저장해 둔 위치로 이동, preset에 번호)\n"
+    "preset(저장해 둔 위치로 이동, preset에 번호), brightness(밝기), contrast(대비), saturation(채도)\n"
     "- register_camera: 찾은 카메라를 관제에 등록하는 요청\n"
     "- refuse: 재부팅·전원 끄기·삭제·초기화·비밀번호나 설정 변경처럼 위험한 요청\n"
     "- unknown: 어디에도 맞지 않음\n"
     "카메라 번호와 이름은 시스템이 따로 처리하니 고르지 않는다. 해당 없으면 action은 none, preset은 0.";
+
+// 화질 동작 (밝기·대비·채도)
+bool isImage(const std::string& a) { return a == "brightness" || a == "contrast" || a == "saturation"; }
+std::string imageKo(const std::string& a) { return a == "brightness" ? "밝기" : a == "contrast" ? "대비" : "채도"; }
+std::string imageParam(const std::string& a) {
+    return a == "brightness" ? "Brightness" : a == "contrast" ? "Contrast" : "Saturation";
+}
 
 struct Pending {
     std::string id, kind;  // control | register
@@ -198,9 +205,19 @@ public:
             else if (p.in.action == "preset") r = sunapiPreset(p.cam.host, p.cam.port, 0, p.in.value);
             else if (p.in.action == "zoom_in") r = sunapiZoom(p.cam.host, p.cam.port, 0, p.in.value);
             else if (p.in.action == "zoom_out") r = sunapiZoom(p.cam.host, p.cam.port, 0, -p.in.value);
+            int before = -1, after = -1;
+            if (isImage(p.in.action))
+                r = sunapiImage(p.cam.host, p.cam.port, 0, imageParam(p.in.action), p.in.value, p.in.relative, &before,
+                                &after);
             out["ok"] = r.ok;
             out["detail"] = r.detail;
-            out["reply"] = r.ok ? label(p.cam) + " 카메라 " + done(p.in) : label(p.cam) + " 제어 실패: " + r.detail;
+            std::string what = done(p.in);
+            if (isImage(p.in.action)) {
+                out["before"] = before;
+                out["after"] = after;
+                what = imageKo(p.in.action) + "를 " + std::to_string(before) + " → " + std::to_string(after) + "(으)로 바꿨어요.";
+            }
+            out["reply"] = r.ok ? label(p.cam) + " 카메라 " + what : label(p.cam) + " 제어 실패: " + r.detail;
         } else {
             std::lock_guard<std::mutex> lk(mu_);
             const bool dup = std::any_of(cams_.begin(), cams_.end(), [&](const Camera& c) {
@@ -277,6 +294,11 @@ private:
         if (in.action == "zoom_out") return std::to_string(in.value) + "단계 축소할까요?";
         if (in.action == "focus") return "초점을 맞출까요?";
         if (in.action == "preset") return std::to_string(in.value) + "번 프리셋으로 돌릴까요?";
+        if (isImage(in.action)) {
+            if (!in.relative) return imageKo(in.action) + "를 " + std::to_string(in.value) + "(으)로 바꿀까요?";
+            return imageKo(in.action) + "를 " + std::to_string(std::abs(in.value)) + "만큼 " +
+                   (in.value > 0 ? "올릴까요?" : "내릴까요?");
+        }
         return in.action + "?";
     }
 
@@ -299,7 +321,7 @@ private:
                 {"enum",
                  {"search_people", "find_cameras", "list_cameras", "control_camera", "register_camera", "refuse",
                   "unknown"}}}},
-              {"action", {{"type", "string"}, {"enum", {"zoom_in", "zoom_out", "focus", "preset", "none"}}}},
+              {"action", {{"type", "string"}, {"enum", {"zoom_in", "zoom_out", "focus", "preset", "brightness", "contrast", "saturation", "none"}}}},
               {"preset", {{"type", "integer"}, {"minimum", 0}, {"maximum", 9}}}}},
             {"required", {"tool", "action", "preset"}}};
         const json req = {{"model", model.empty() ? a_.model : model},
@@ -345,6 +367,8 @@ private:
             static const std::regex steps("(\\d+)\\s*(단계|칸|스텝|steps?)", std::regex::icase);
             std::smatch m;
             base.value = std::regex_search(text, m, steps) ? std::clamp(std::stoi(m.str(1)), 1, 5) : 1;
+        } else if (isImage(base.action)) {
+            rules_.imageValue(text, &base);  // 값·방향도 규칙이 뽑는다. 못 뽑으면 되묻기
         }
         if (base.tool == "unknown") base.reason = "LLM도 판단하지 못함";
         return base;
@@ -352,7 +376,8 @@ private:
 
     json run(const Intent& in, const std::string& text, const std::string& sid, bool dry) {
         json out = {{"tool", in.tool},     {"source", in.source}, {"action", in.action},
-                    {"value", in.value},   {"site", in.site},     {"need_confirm", false}};
+                    {"value", in.value},   {"site", in.site},     {"need_confirm", false},
+                    {"relative", in.relative}};
         if (in.tool == "refuse") {
             out["refused"] = true;
             out["reply"] = (in.reason.empty() ? std::string("그런 명령은") : "'" + in.reason + "' 같은 명령은") +
@@ -470,7 +495,17 @@ private:
         out["camera"] = c.id;
         out["camera_how"] = r.how;
         if (in.action.empty()) {
-            out["reply"] = "어떤 동작을 할까요? (확대·축소·초점·프리셋)";
+            out["reply"] = "어떤 동작을 할까요? (확대·축소·초점·프리셋·밝기·대비·채도)";
+            return out;
+        }
+        if (isImage(in.action) && in.relative && in.value == 0) {
+            out["need_value"] = true;
+            out["reply"] = label(c) + ": " + imageKo(in.action) + "를 어떻게 바꿀까요? (예: 올려 줘, 70으로)";
+            return out;
+        }
+        if (isImage(in.action) && !in.relative && (in.value < 0 || in.value > 100)) {
+            out["blocked"] = "range";
+            out["reply"] = label(c) + ": " + imageKo(in.action) + "는 0~100 사이로만 바꿀 수 있어요.";
             return out;
         }
         if (in.action == "preset" && !c.ptz) {

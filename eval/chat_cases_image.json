@@ -1,0 +1,144 @@
+{
+ "note": "화질(밝기·대비·채도) 명령 — 기존 46문장과 따로 둔 추가 세트",
+ "cases": [
+  {
+   "q": "G506 밝기 올려줘",
+   "expect": {
+    "tool": "control_camera",
+    "outcome": "confirm",
+    "camera": "G506",
+    "action": "brightness",
+    "value": 10,
+    "relative": true
+   },
+   "group": "화질"
+  },
+  {
+   "q": "G509 화면 좀 어둡게 해줘",
+   "expect": {
+    "tool": "control_camera",
+    "outcome": "confirm",
+    "camera": "G509",
+    "action": "brightness",
+    "value": -10,
+    "relative": true
+   },
+   "group": "화질"
+  },
+  {
+   "q": "G301 밝기 70으로 맞춰줘",
+   "expect": {
+    "tool": "control_camera",
+    "outcome": "confirm",
+    "camera": "G301",
+    "action": "brightness",
+    "value": 70,
+    "relative": false
+   },
+   "group": "화질"
+  },
+  {
+   "q": "G341 대비 20 올려",
+   "expect": {
+    "tool": "control_camera",
+    "outcome": "confirm",
+    "camera": "G341",
+    "action": "contrast",
+    "value": 20,
+    "relative": true
+   },
+   "group": "화질"
+  },
+  {
+   "q": "G436 명암 낮춰줘",
+   "expect": {
+    "tool": "control_camera",
+    "outcome": "confirm",
+    "camera": "G436",
+    "action": "contrast",
+    "value": -10,
+    "relative": true
+   },
+   "group": "화질"
+  },
+  {
+   "q": "G326 채도 높여줘",
+   "expect": {
+    "tool": "control_camera",
+    "outcome": "confirm",
+    "camera": "G326",
+    "action": "saturation",
+    "value": 10,
+    "relative": true
+   },
+   "group": "화질"
+  },
+  {
+   "q": "G329 색감 연하게 해줘",
+   "expect": {
+    "tool": "control_camera",
+    "outcome": "confirm",
+    "camera": "G329",
+    "action": "saturation",
+    "value": -10,
+    "relative": true
+   },
+   "group": "화질"
+  },
+  {
+   "q": "G505 채도 30으로",
+   "expect": {
+    "tool": "control_camera",
+    "outcome": "confirm",
+    "camera": "G505",
+    "action": "saturation",
+    "value": 30,
+    "relative": false
+   },
+   "group": "화질"
+  },
+  {
+   "q": "그 카메라 밝기 원래대로",
+   "expect": {
+    "tool": "control_camera",
+    "outcome": "confirm",
+    "camera": "G340",
+    "action": "brightness",
+    "value": 50,
+    "relative": false
+   },
+   "context": {
+    "cam": "G340"
+   },
+   "group": "화질"
+  },
+  {
+   "q": "G299 밝기 150으로 해줘",
+   "expect": {
+    "tool": "control_camera",
+    "outcome": "blocked",
+    "camera": "G299",
+    "action": "brightness"
+   },
+   "group": "화질"
+  },
+  {
+   "q": "G328 밝기 좀 바꿔봐",
+   "expect": {
+    "tool": "control_camera",
+    "outcome": "ask",
+    "camera": "G328",
+    "action": "brightness"
+   },
+   "group": "화질"
+  },
+  {
+   "q": "G330 밝기 설정 바꿔",
+   "expect": {
+    "tool": "refuse",
+    "outcome": "refuse"
+   },
+   "group": "화질"
+  }
+ ]
+}

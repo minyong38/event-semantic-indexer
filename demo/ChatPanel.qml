@@ -43,7 +43,7 @@ Rectangle {
     readonly property var phaseKo: ({ sending: "보내는 중…", done: "✓ 실행함", failed: "✗ 실행 안 됨",
                                       cancelled: "취소함", expired: "시간이 지나 취소됨" })
     readonly property var examples: ["버스 정류장에서 가방 든 사람 찾아줘", "그 카메라 확대", "두 번째 사람 카메라 초점",
-                                     "G506 좀 땡겨봐", "병원 카메라 확대", "등록 안 된 카메라 찾아줘", "첫 번째 등록해줘",
+                                     "G506 좀 땡겨봐", "G506 밝기 올려줘", "병원 카메라 확대", "등록 안 된 카메라 찾아줘", "첫 번째 등록해줘",
                                      "카메라 목록 보여줘", "카메라 재부팅해줘"]
 
     ListModel { id: msgs }   // kind: user | bot | note, payload: 서버 응답 JSON 문자열, phase: 확인 버튼 상태

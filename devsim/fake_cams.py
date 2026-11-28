@@ -10,6 +10,8 @@
   프리셋: GET /stw-cgi/ptzcontrol.cgi?msubmenu=preset&action=control&Channel=0&Preset=N
   줌   : GET /stw-cgi/ptzcontrol.cgi?msubmenu=relative&action=control&Channel=0&Zoom=±N
          ← 프리셋·줌은 SUNAPI 형식을 흉내 낸 것 (실제 카메라에서는 검증 안 함)
+  화질 : GET /stw-cgi/image.cgi?msubmenu=imageenhancements&action=view|set&Channel=0[&Brightness=0~100][&Contrast=..][&Saturation=..]
+         ← 밝기·대비·채도 (다보이조 Qt 클라이언트의 이미지 설정과 같은 세 가지, SUNAPI 형식 흉내)
   정보 : GET /stw-cgi/system.cgi?msubmenu=deviceinfo&action=view
   상태 : GET /sim/state   (시뮬레이터 전용 — 평가 스크립트가 '정말 바뀌었나' 확인용)
 
@@ -62,6 +64,7 @@ class Cam:
         self.zoom = 1
         self.preset = 1 if ptz else None
         self.focus_count = 0
+        self.brightness = self.contrast = self.saturation = 50
         self.commands = 0
         self.lock = threading.Lock()
 
@@ -69,6 +72,7 @@ class Cam:
         with self.lock:
             return {"id": self.id, "site": self.site, "ptz": self.ptz, "model": self.model,
                     "zoom": self.zoom, "preset": self.preset, "focus_count": self.focus_count,
+                    "brightness": self.brightness, "contrast": self.contrast, "saturation": self.saturation,
                     "commands": self.commands}
 
 
@@ -93,6 +97,29 @@ def handle(cam, path, q):
         with cam.lock:
             cam.focus_count += 1
         return ok()
+    if path == "/stw-cgi/image.cgi" and g("msubmenu") == "imageenhancements":
+        keys = ("Brightness", "Contrast", "Saturation")
+        ch = g("Channel", "0")
+        if g("action") == "view":
+            with cam.lock:
+                return 200, "".join(f"Channel.{ch}.{k}={getattr(cam, k.lower())}\r\n" for k in keys)
+        if g("action") == "set":
+            changes = {}
+            for k in keys:
+                if k in q:
+                    try:
+                        v = int(g(k))
+                    except ValueError:
+                        return ng(600, f"Invalid {k}")
+                    if not 0 <= v <= 100:
+                        return ng(602, f"{k} out of range (0~100)")
+                    changes[k.lower()] = v
+            if not changes:
+                return ng(600, "No parameter")
+            with cam.lock:
+                for k, v in changes.items():
+                    setattr(cam, k, v)
+            return ok()
     if path == "/stw-cgi/ptzcontrol.cgi" and g("action") == "control":
         sub = g("msubmenu")
         if sub == "preset":

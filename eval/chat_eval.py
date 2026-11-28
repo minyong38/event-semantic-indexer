@@ -31,7 +31,7 @@ def outcome(r):
         return "refuse"
     if r.get("blocked"):
         return "blocked"
-    if r.get("need_camera"):
+    if r.get("need_camera") or r.get("need_value"):
         return "ask"
     if r.get("need_confirm"):
         return "confirm"
@@ -43,10 +43,11 @@ def outcome(r):
 def judge(case, r):
     e = case["expect"]
     got = {"tool": r.get("tool"), "outcome": outcome(r), "camera": r.get("camera"),
-           "action": r.get("action") or None, "value": r.get("value"), "site": r.get("site") or None}
+           "action": r.get("action") or None, "value": r.get("value"), "site": r.get("site") or None,
+           "relative": r.get("relative")}
     tool_ok = got["tool"] == e["tool"]
     full = tool_ok and got["outcome"] == e["outcome"]
-    for k in ("camera", "action", "value", "site"):
+    for k in ("camera", "action", "value", "site", "relative"):
         if k in e and got[k] != e[k]:
             full = False
     # 잘못된 제어 제안: 확인 질문까지 갔는데 대상·동작이 틀렸거나, 제어를 기대하지 않은 문장
@@ -145,7 +146,9 @@ def live_check(server, cases, mode):
         good = (a == "preset" and s1["preset"] == v) or \
                (a == "focus" and s1["focus_count"] == s0["focus_count"] + 1) or \
                (a == "zoom_in" and s1["zoom"] == min(20, s0["zoom"] + v)) or \
-               (a == "zoom_out" and s1["zoom"] == max(1, s0["zoom"] - v))
+               (a == "zoom_out" and s1["zoom"] == max(1, s0["zoom"] - v)) or \
+               (a in ("brightness", "contrast", "saturation") and
+                s1[a] == (max(0, min(100, s0[a] + v)) if e.get("relative") else v))
         ok += good and cr.get("ok", False)
         print(f"    {'✓' if good else '✗'} {c['q']:<28} → {cr.get('reply')}")
     stray = all_cmds() - before_total - sent
